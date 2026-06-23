@@ -29,5 +29,9 @@ app/strategy_cache.json
 # Telemetry dumps
 dumps/
 
+# Setups & Logos
+setups/
+overlays/logos/
+
 # Claude Code local config
 .claude/
