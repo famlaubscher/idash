@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+venv/
+.venv/
+*.egg-info/
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# iDash user data
+overlay_layout.json
+strategy_cache.json
+app/strategy_cache.json
+*.log
+
+# Telemetry dumps
+dumps/
+
+# Claude Code local config
+.claude/

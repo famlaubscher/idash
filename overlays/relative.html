@@ -1,0 +1,970 @@
+﻿<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <title>Relative Overlay</title>
+  <style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: #e5e7eb;
+    overflow: hidden;
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-start;
+  }
+
+  .relative-wrapper {
+    margin: 0;
+    display: inline-block;
+    position: relative;
+    transform-origin: top left;
+  }
+
+  .relative-resizer {
+    position: absolute;
+    top: 0;
+    right: -4px;
+    width: 6px;
+    height: 100%;
+    cursor: ew-resize;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.15);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s ease;
+  }
+
+  .relative-wrapper.edit-mode .relative-resizer {
+    opacity: 0.8;
+    pointer-events: auto;
+  }
+
+  .relative-root {
+    width: 540px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 0 10px 0 10px;
+    border-radius: 14px;
+    background: rgba(0, 0, 0, var(--card-bg-alpha, 0.78));
+    box-shadow: none;
+    overflow: hidden;
+    color: #e5e7eb;
+  }
+
+  .relative-root.edit-mode {
+    outline: 2px solid rgba(248, 113, 113, 0.9);
+    box-shadow: none;
+  }
+
+  .env-bar.session-info-bar {
+    margin: 0 -10px 4px -10px;
+    padding: 7px 14px;
+    border-radius: 0;
+    background: rgba(255, 255, 255, 0.04);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  }
+
+  .table-wrapper {
+    flex: 1;
+    border-radius: 10px;
+    overflow: hidden;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+    table-layout: fixed;
+  }
+
+  thead tr {
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+
+  th, td {
+    padding: 2px 6px;
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  th {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: #6b7280;
+    font-weight: 500;
+    padding: 5px 6px 4px;
+  }
+
+  th.pos  { width: 38px; text-align: right; }
+  th.car  { width: 42px; text-align: right; }
+  th.name { width: 160px; }
+  th.tyre { width: 40px; text-align: center; }
+  th.cls  { width: 110px; text-align: right; }
+  th.gap  { width: 60px; text-align: right; }
+
+  tbody tr {
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+  }
+
+  tbody tr:last-child { border-bottom: none; }
+
+  tbody tr.me-row {
+    background: rgba(59, 130, 246, 0.18);
+  }
+
+  td.car-cell,
+  td.pos-cell,
+  td.gap-cell {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-size: 13px;
+  }
+
+  td.car-cell {
+    font-weight: 600;
+    color: #6b7280;
+  }
+
+  td.pos-cell {
+    font-weight: 700;
+    color: #e5e7eb;
+  }
+
+  td.name-cell {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 190px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  td.team-cell {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 110px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-main, #e5e7eb);
+    white-space: nowrap;
+  }
+
+  td.name-cell span.you-tag {
+    font-weight: 700;
+    color: #bfdbfe;
+  }
+
+  td.cls-cell {
+    text-align: right;
+    font-size: 13px;
+    color: #9ca3af;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  .brand-logo {
+    height: 16px;
+    width: auto;
+    max-width: 38px;
+    object-fit: contain;
+    vertical-align: middle;
+    display: inline-block;
+    background: rgba(255,255,255,0.10);
+    border-radius: 3px;
+    padding: 1px 3px;
+  }
+  .brand-mark {
+    vertical-align: middle;
+    display: inline-block;
+  }
+
+  td.tyre-cell {
+    text-align: center;
+  }
+
+  .gap-positive { color: #4ade80; }
+  .gap-negative { color: #f97373; }
+
+  .tyre-dot {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #ffffff;
+    font-size: 9px;
+    font-weight: 700;
+    color: #000000;
+  }
+
+  .tyre-dot.wet {
+    background: #3b82f6;
+    color: #e5e7eb;
+  }
+
+  .cls-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: rgba(255,255,255,0.07);
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .cls-pill span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .empty-row td {
+    padding: 8px 6px;
+    text-align: center;
+    font-size: 13px;
+    color: #6b7280;
+  }
+
+  .env-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin: 4px -10px 0 -10px;
+    padding: 6px 14px;
+    font-size: 14px;
+    color: #9ca3af;
+    background: rgba(255,255,255,0.04);
+    border-radius: 0;
+    border-top: 1px solid rgba(255,255,255,0.07);
+    border-bottom: none;
+  }
+
+  .env-left,
+  .env-center {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .env-right {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    justify-content: flex-end;
+  }
+
+  .env-left {
+    justify-content: flex-start;
+  }
+
+  .env-center {
+    justify-content: center;
+  }
+
+  .env-item {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+  }
+
+  .env-label {
+    text-transform: none;
+    letter-spacing: 0.02em;
+    font-size: 13px;
+    font-weight: 600;
+    color: #e5e7eb;
+  }
+
+  .env-value {
+    font-variant-numeric: tabular-nums;
+    font-size: 13px;
+    font-weight: 600;
+    color: #e5e7eb;
+  }
+
+  .env-sep {
+    opacity: 0.4;
+    font-size: 12px;
+    margin: 0 4px;
+  }
+
+  #track-wetness-container {
+    flex: 0 0 auto;
+    min-width: 0;
+  }
+
+  #track-wetness-container .env-item {
+    flex-wrap: nowrap;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+
+  #track-wetness-label {
+    display: inline-block;
+    max-width: 130px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: bottom;
+  }
+
+  .wet-scale {
+    display: inline-flex;
+    flex-wrap: nowrap;
+    gap: 2px;
+    margin-left: 4px;
+  }
+
+  .wet-box {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    border: 1px solid rgba(148, 163, 184, 0.5);
+    background: transparent;
+  }
+  </style>
+
+</head>
+<body>
+  <div id="relative-wrapper" class="relative-wrapper">
+    <div id="relative-root" class="relative-root">
+
+      <!-- OBERSTE ZEILE: Inc | PC-Time | SoF -->
+      <div class="env-bar session-info-bar">
+        <div class="env-item">
+          <span class="env-label">Inc:&nbsp;</span>
+          <span id="session-inc" class="env-value">-</span>
+        </div>
+        <span class="env-sep">|</span>
+        <div class="env-item">
+          <span class="env-label">Time:</span>
+          <span id="local-time" class="env-value">--:--:--</span>
+        </div>
+        <span class="env-sep">|</span>
+        <div class="env-item">
+          <span class="env-label">SoF:</span>
+          <span id="session-sof" class="env-value">-</span>
+        </div>
+      </div>
+
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th class="pos">POS</th>
+              <th class="car">CAR#</th>
+              <th class="name">NAME</th>
+              <th class="tyre">TYRE</th>
+              <th class="cls">CAR</th>
+              <th class="gap">INT</th>
+            </tr>
+          </thead>
+          <tbody id="relative-body">
+            <tr class="empty-row">
+              <td colspan="6">Keine Relativ-Daten verf&uuml;gbar&hellip;</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- UNTERE ZEILE: Air links, Track mitte, Wetness rechts -->
+      <div class="env-bar">
+        <div class="env-left">
+          <div class="env-item">
+            <span class="env-label">Air:</span>
+            <span id="air-temp" class="env-value">--&deg;C</span>
+          </div>
+        </div>
+
+        <div class="env-center">
+          <div class="env-item">
+            <span class="env-label">Track:</span>
+            <span id="track-temp" class="env-value">--&deg;C</span>
+          </div>
+        </div>
+
+        <div class="env-right" id="track-wetness-container">
+          <div class="env-item">
+            <span class="env-label">Wetness:</span>
+            <span id="track-wetness-label" class="env-value">--</span>
+            <span class="wet-scale">
+              <span class="wet-box" data-level="dry" title="Dry"></span>
+              <span class="wet-box" data-level="mostly_dry" title="Mostly Dry"></span>
+              <span class="wet-box" data-level="slightly_wet" title="Slightly Wet"></span>
+              <span class="wet-box" data-level="moderately_wet" title="Moderately Wet"></span>
+              <span class="wet-box" data-level="wet" title="Wet"></span>
+              <span class="wet-box" data-level="heavy_wet" title="Heavy Wet"></span>
+              <span class="wet-box" data-level="very_wet" title="Extreme Wet"></span>
+            </span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+    <div id="relative-resizer" class="relative-resizer"></div>
+  </div>
+
+  <script src="overlay-persistence.js"></script>
+  <script>
+    const OFFLINE_MODE = false;
+    const _wsHost = (location.hostname && location.hostname !== 'localhost') ? location.hostname : '127.0.0.1';
+    const WS_URL = `ws://${_wsHost}:8765`;
+
+    const relativeWrapper = document.getElementById("relative-wrapper");
+    const relativeResizer = document.getElementById("relative-resizer");
+    const relativeRoot    = document.getElementById("relative-root");
+
+    const tbody           = document.getElementById("relative-body");
+
+    const sessionIncEl    = document.getElementById("session-inc");
+    const localTimeEl     = document.getElementById("local-time");
+    const sessionSofEl    = document.getElementById("session-sof");
+
+    const airTempEl       = document.getElementById("air-temp");
+    const trackTempEl     = document.getElementById("track-temp");
+    const trackWetLabelEl = document.getElementById("track-wetness-label");
+    const trackWetContainerEl = document.getElementById("track-wetness-container");
+
+    const persist = createOverlayPersistence('relative');
+
+    let socket = null;
+    let reconnectTimer = null;
+
+    let relScale = 1;
+    let userScaleSet = false;   // true wenn Scale aus Storage oder manuellem Resize kommt
+    let isResizingRel = false;
+    let resizeStartX = 0;
+    let startScale = 1;
+    let baseWidth = null;
+
+    window.addEventListener('DOMContentLoaded', () => {
+        const saved = persist.restore();
+        if (saved !== null) {
+            relScale = saved;
+            userScaleSet = true;
+            if (relativeWrapper) relativeWrapper.style.transform = `scale(${relScale})`;
+        }
+    });
+
+    window.setEditMode = function(edit) {
+      if (edit) {
+        relativeWrapper.classList.add("edit-mode");
+        relativeRoot.classList.add("edit-mode");
+      } else {
+        relativeWrapper.classList.remove("edit-mode");
+        relativeRoot.classList.remove("edit-mode");
+      }
+    };
+
+    function autoFitScale() {
+      // Wenn der User eine Scale manuell gesetzt oder aus Storage geladen hat,
+      // nicht Ã¼berschreiben â€” sonst springt die Breite bei jedem Daten-Update.
+      if (userScaleSet) return;
+      if (!relativeWrapper || !relativeRoot) return;
+
+      relScale = 1;
+      relativeWrapper.style.transform = "scale(1)";
+
+      const rootRect = relativeRoot.getBoundingClientRect();
+      const availW = window.innerWidth;
+      const availH = window.innerHeight;
+
+      const scaleW = availW / rootRect.width;
+      const scaleH = availH / rootRect.height;
+
+      let scale = Math.min(scaleW, scaleH);
+      if (!Number.isFinite(scale) || scale <= 0) {
+        scale = 1;
+      }
+      if (scale > 1) scale = 1;
+
+      relScale = scale;
+      relativeWrapper.style.transform = `scale(${relScale})`;
+    }
+
+    window.addEventListener("resize", autoFitScale);
+
+    function onRelResize(e) {
+      if (!isResizingRel || !baseWidth) return;
+      const dx = e.clientX - resizeStartX;
+      let newScale = startScale + dx / baseWidth;
+      if (newScale < 0.5) newScale = 0.5;
+      if (newScale > 2.0) newScale = 2.0;
+      relScale = newScale;
+      relativeWrapper.style.transform = `scale(${relScale})`;
+      persist.setScale(relScale);
+    }
+
+    function stopRelResize() {
+      if (!isResizingRel) return;
+      isResizingRel = false;
+      userScaleSet = true;
+      persist.saveScale(relScale);
+      document.removeEventListener("mousemove", onRelResize);
+      document.removeEventListener("mouseup", stopRelResize);
+    }
+
+    if (relativeWrapper && relativeResizer) {
+      relativeResizer.addEventListener("mousedown", (e) => {
+        isResizingRel = true;
+        resizeStartX = e.clientX;
+        startScale = relScale;
+        const rect = relativeWrapper.getBoundingClientRect();
+        baseWidth = rect.width / relScale;
+        document.addEventListener("mousemove", onRelResize);
+        document.addEventListener("mouseup", stopRelResize);
+        e.preventDefault();
+        e.stopPropagation();
+      });
+    }
+
+    function updateLocalClock() {
+      if (!localTimeEl) return;
+      const now = new Date();
+      const hh = String(now.getHours()).padStart(2, "0");
+      const mm = String(now.getMinutes()).padStart(2, "0");
+      const ss = String(now.getSeconds()).padStart(2, "0");
+      localTimeEl.textContent = `${hh}:${mm}:${ss}`;
+    }
+    updateLocalClock();
+    setInterval(updateLocalClock, 1000);
+
+    // Eigene, vereinfachte Marken-Tiles (keine geschützten Original-Logos).
+    const BRAND_LOGO = {
+      "BMW": "bmw", "Porsche": "porsche", "Ferrari": "ferrari.png",
+      "Mercedes": "mercedes", "Mercedes-AMG": "mercedes",
+      "Audi": "audi", "McLaren": "mclaren", "Lamborghini": "lamborghini",
+      "Ford": "ford", "Chevrolet": "chevrolet", "Cadillac": "Cadillac.png",
+      "Acura": "acura", "Aston Martin": "aston", "Toyota": "toyota",
+      "Honda": "honda", "Dallara": "dallara.png", "Oreca": "oreca",
+      "Nissan": "nissan", "Volkswagen": "volkswagen", "Hyundai": "hyundai",
+      "Kia": "kia", "Mazda": "mazda", "Buick": "buick", "Pontiac": "pontiac",
+      "Renault": "renault", "Lotus": "lotus", "Ruf": "ruf", "Williams": "williams",
+      "Radical": "radical",
+    };
+
+    function classTag(full) {
+      const s = String(full || "").toUpperCase();
+      const tags = ["GTP", "LMP", "GT3", "GT4", "GTE", "TCR", "GT2", "GT1"];
+      for (const t of tags) { if (s.includes(t)) return t; }
+      return (s.split(/\s+/)[0] || s).slice(0, 3).padEnd(3, " ");
+    }
+
+    function carMark(brand, classFull, classColor) {
+      const logo = BRAND_LOGO[brand];
+      if (logo) {
+        const file = logo.includes('.') ? logo : logo + '.svg';
+        return `<img class="brand-logo" src="logos/${file}" alt="${brand}" onerror="this.style.display='none'">`;
+      }
+      const txt = classTag(classFull || brand);
+      const bg = "#1a1f2b";
+      const fg = classColor || "#cbd5e1";
+      const w = Math.max(34, txt.length * 9 + 14);
+      return `<svg class="brand-mark" width="${w}" height="20" viewBox="0 0 ${w} 20" role="img" aria-label="${brand || txt}">
+          <rect x="0.5" y="0.5" width="${w-1}" height="19" rx="5" fill="${bg}" stroke="rgba(255,255,255,0.18)" stroke-width="1"/>
+          <text x="${w/2}" y="14.5" text-anchor="middle" font-family="system-ui,sans-serif"
+                font-size="11" font-weight="800" letter-spacing="0.5" fill="${fg}">${txt}</text>
+        </svg>`;
+    }
+
+    function renderRelative(relativeList) {
+      if (!Array.isArray(relativeList) || !relativeList.length) {
+        tbody.innerHTML = `
+          <tr class="empty-row">
+            <td colspan="6">Keine Relativ-Daten verf&uuml;gbar&hellip;</td>
+          </tr>
+        `;
+        autoFitScale();
+        return;
+      }
+
+      // WICHTIG: Reihenfolge jetzt 1:1 vom Server Ã¼bernehmen,
+      // damit dein Builder die Mitte/Sortierung vorgibt.
+      const view = relativeList;
+
+      const rowsHtml = view.map(row => {
+        const carNum = row.car_number ?? row.carNumber ?? row.carNo ?? row.car_idx ?? "";
+        const pos = row.pos ?? row.race_pos ?? "";
+        const classColor = row.car_class_color || "#888888";
+        const name = row.name || "";
+        const displayName = name;
+        const gap = row.gap ?? "--.-";
+        const cls = row.car_class || "";
+        const brand = row.car_brand || row.car_class || "";
+        const classFull = row.car_class_full || row.car_class || "";
+        const tyre = row.tyre ?? row.tire ?? row.tyre_compound ?? row.tyreCompound ?? "";
+        const tyreNorm = String(tyre).toLowerCase();
+        let tyreClass = "";
+        let tyreLabel = "";
+        if (tyreNorm.includes("dry") || tyreNorm === "d") {
+          tyreClass = "dry";
+          tyreLabel = "D";
+        } else if (tyreNorm.includes("wet") || tyreNorm === "w") {
+          tyreClass = "wet";
+          tyreLabel = "W";
+        }
+        const isMe = !!row.me;
+
+        const gapDisplay = gap.replace(/^[+-]/, "");
+        const lapDiff = row.lap_diff ?? 0;
+        // Nur echten Rundenrückstand anzeigen wenn Gap-Wert groß genug ist.
+        // Beim Überfahren der Ziellinie springt lap_diff kurz auf ±1,
+        // obwohl der echte Abstand nur wenige Sekunden beträgt.
+        const gapNum = parseFloat(gap);
+        // ±1 kann ein Finish-Line-Artefakt sein (lap zählt hoch bevor pct sich angleicht).
+        // >=2 / <=-2 ist immer ein echter Rundenunterschied.
+        const isRealLapDiff = lapDiff !== 0 && (
+            Math.abs(lapDiff) >= 2 || isNaN(gapNum) || Math.abs(gapNum) > 30
+        );
+        const lapBg = !isMe && isRealLapDiff && lapDiff > 0 ? "rgba(220,40,40,0.35)"
+                    : !isMe && isRealLapDiff && lapDiff < 0 ? "rgba(40,100,220,0.35)"
+                    : "";
+
+        const nameHtml = isMe
+          ? `<span class="you-tag">${displayName}</span>`
+          : `<span>${displayName}</span>`;
+        return `
+          <tr class="${isMe ? "me-row" : ""}" ${lapBg ? `style="background:${lapBg};"` : ""}>
+            <td class="pos-cell" style="border-left:3px solid ${classColor};padding-left:6px;">${pos}</td>
+            <td class="car-cell">${carNum}</td>
+            <td class="name-cell">${nameHtml}</td>
+            <td class="tyre-cell">${tyreClass ? `<span class="tyre-dot ${tyreClass}">${tyreLabel}</span>` : ""}</td>
+            <td class="cls-cell" title="${classFull}">${carMark(brand, classFull, classColor)}</td>
+            <td class="gap-cell"><span>${gapDisplay}</span></td>
+          </tr>
+        `;
+      }).join("");
+
+      tbody.innerHTML = rowsHtml;
+      autoFitScale();
+    }
+
+    function applySessionInfo(info, payload, relativeList) {
+      if (!info) info = {};
+      payload = payload || {};
+      relativeList = Array.isArray(relativeList) ? relativeList : [];
+
+      const sofRaw =
+        info.sof ??
+        info.strength_of_field ??
+        null;
+
+      let sofText = "-";
+      const sofNum = Number(sofRaw);
+      if (Number.isFinite(sofNum) && sofNum > 0) {
+        sofText = String(Math.round(sofNum));
+      }
+
+      if (sessionSofEl) {
+        sessionSofEl.textContent = sofText;
+      }
+
+      let incRaw =
+        info.incidents ??
+        info.my_incidents ??
+        info.inc_count ??
+        info.incident_count ??
+        payload.incidents ??
+        payload.inc ??
+        payload.my_incidents ??
+        payload.driver_incidents ??
+        null;
+
+      if ((incRaw === null || incRaw === undefined) && relativeList.length > 0) {
+        const meRow = relativeList.find(r => r && r.me);
+        if (meRow && meRow.inc !== undefined && meRow.inc !== null) {
+          incRaw = meRow.inc;
+        }
+      }
+
+      let incText = "-";
+      const incNum = Number(incRaw);
+      if (Number.isFinite(incNum) && incNum >= 0) {
+        incText = String(incNum);
+      } else if (incRaw !== null && incRaw !== undefined) {
+        incText = String(incRaw);
+      }
+
+      if (sessionIncEl) {
+        sessionIncEl.textContent = incText;
+      }
+    }
+
+    function applyEnv(payload) {
+      const air = payload.air_temp ?? payload.AirTemp ?? payload.airTemp;
+      const track = payload.track_temp ?? payload.TrackTemp ?? payload.trackTemp;
+
+      const wetIndexRaw = payload.track_wetness_idx ?? payload.trackWetnessIdx ?? null;
+
+      const wetLabelFromPayload = payload.track_wet_label ?? payload.trackWetLabel;
+      let wetBucketFromPayload = payload.track_wet_bucket ?? payload.trackWetBucket;
+      const wetColorFromPayload = payload.track_wet_color ?? payload.trackWetColor;
+
+      const wetRawLegacy = payload.track_wetness
+        ?? payload.TrackWetness
+        ?? payload.trackWetness
+        ?? payload.track_wet_pct
+        ?? payload.TrackWetPct
+        ?? null;
+
+      if (airTempEl && air !== undefined && air !== null) {
+        const val = Number(air);
+        airTempEl.innerHTML = Number.isFinite(val) ? `${val.toFixed(1)}&deg;C` : `${air}&deg;C`;
+      }
+
+      if (trackTempEl && track !== undefined && track !== null) {
+        const val = Number(track);
+        trackTempEl.innerHTML = Number.isFinite(val) ? `${val.toFixed(1)}&deg;C` : `${track}&deg;C`;
+      }
+
+      let effectiveLabel = "--";
+      let bucketFromIndex = null;
+
+      if (wetIndexRaw !== null && wetIndexRaw !== undefined) {
+        const idxNum = Number(wetIndexRaw);
+        if (Number.isFinite(idxNum)) {
+          const idx = Math.max(1, Math.min(7, Math.round(idxNum)));
+          switch (idx) {
+            case 1:
+              effectiveLabel = "Dry";
+              bucketFromIndex = "dry";
+              break;
+            case 2:
+              effectiveLabel = "Mostly Dry";
+              bucketFromIndex = "mostly_dry";
+              break;
+            case 3:
+              effectiveLabel = "Very lightly wet";
+              bucketFromIndex = "slightly_wet";
+              break;
+            case 4:
+              effectiveLabel = "Lightly wet";
+              bucketFromIndex = "moderately_wet";
+              break;
+            case 5:
+              effectiveLabel = "Moderately wet";
+              bucketFromIndex = "wet";
+              break;
+            case 6:
+              effectiveLabel = "Very wet";
+              bucketFromIndex = "heavy_wet";
+              break;
+            case 7:
+              effectiveLabel = "Extreme wet";
+              bucketFromIndex = "very_wet";
+              break;
+          }
+        }
+      }
+
+      if (effectiveLabel === "--") {
+        if (wetLabelFromPayload) {
+          effectiveLabel = wetLabelFromPayload;
+        } else if (wetRawLegacy !== null && wetRawLegacy !== undefined) {
+          let wetVal = Number(wetRawLegacy);
+          if (Number.isFinite(wetVal)) {
+            if (wetVal > 0 && wetVal <= 1.5) {
+              wetVal = wetVal * 100;
+            }
+            const pct = wetVal;
+            if (pct < 1)        effectiveLabel = "Dry";
+            else if (pct < 5)   effectiveLabel = "Mostly Dry";
+            else if (pct < 15)  effectiveLabel = "Very lightly wet";
+            else if (pct < 25)  effectiveLabel = "Lightly wet";
+            else if (pct < 40)  effectiveLabel = "Moderately wet";
+            else if (pct < 60)  effectiveLabel = "Very wet";
+            else                effectiveLabel = "Extreme wet";
+          } else {
+            effectiveLabel = String(wetRawLegacy);
+          }
+        }
+      }
+
+      if (trackWetLabelEl) {
+        trackWetLabelEl.textContent = effectiveLabel;
+      }
+
+      if (trackWetContainerEl) {
+        const boxes = Array.from(trackWetContainerEl.querySelectorAll(".wet-box"));
+        const levels = [
+          "dry",
+          "mostly_dry",
+          "slightly_wet",
+          "moderately_wet",
+          "wet",
+          "heavy_wet",
+          "very_wet",
+        ];
+
+        boxes.forEach((box) => {
+          box.style.background = "transparent";
+          box.style.borderColor = "rgba(148, 163, 184, 0.5)";
+        });
+
+        let bucket = bucketFromIndex;
+
+        if (!bucket && wetBucketFromPayload) {
+          bucket = String(wetBucketFromPayload).toLowerCase().replace(/\s+/g, "_");
+        }
+
+        if (!bucket && effectiveLabel && effectiveLabel !== "--") {
+          const l = effectiveLabel.toLowerCase();
+          if (l.includes("extreme"))        bucket = "very_wet";
+          else if (l.includes("very wet"))  bucket = "heavy_wet";
+          else if (l.includes("moderately"))bucket = "wet";
+          else if (l.includes("lightly"))   bucket = "moderately_wet";
+          else if (l.includes("very lightly")) bucket = "slightly_wet";
+          else if (l.includes("mostly"))    bucket = "mostly_dry";
+          else if (l.includes("dry"))       bucket = "dry";
+        }
+
+        if (!bucket && wetRawLegacy !== null && wetRawLegacy !== undefined) {
+          let w = Number(wetRawLegacy);
+          if (Number.isFinite(w)) {
+            if (w > 0 && w <= 1.5) {
+              w = w * 100;
+            }
+            const pct = w;
+            if (pct < 15)      bucket = "dry";
+            else if (pct < 25) bucket = "mostly_dry";
+            else if (pct < 35) bucket = "slightly_wet";
+            else if (pct < 45) bucket = "moderately_wet";
+            else if (pct < 55) bucket = "wet";
+            else if (pct < 65) bucket = "heavy_wet";
+            else               bucket = "very_wet";
+          }
+        }
+
+        if (bucket) {
+          if (!levels.includes(bucket)) {
+            const b = bucket.toLowerCase();
+            if (b.includes("extreme"))      bucket = "very_wet";
+            else if (b.includes("very"))    bucket = "heavy_wet";
+            else if (b.includes("moderately")) bucket = "wet";
+            else if (b.includes("light"))   bucket = "moderately_wet";
+            else if (b.includes("slight"))  bucket = "slightly_wet";
+            else if (b.includes("mostly"))  bucket = "mostly_dry";
+            else if (b.includes("dry"))     bucket = "dry";
+          }
+
+          const idx = levels.indexOf(bucket);
+          if (idx >= 0) {
+            const activeGreen = "#22c55e";
+            const activeBlue  = "#3b82f6";
+
+            boxes.forEach((box) => {
+              const level = box.dataset.level;
+              const levelIdx = levels.indexOf(level);
+              if (levelIdx === -1) return;
+
+              if (levelIdx <= idx) {
+                const color = wetColorFromPayload || (idx <= 1 ? activeGreen : activeBlue);
+                box.style.background = color;
+                box.style.borderColor = color;
+              }
+            });
+          }
+        }
+      }
+    }
+
+    function applyPayload(payload) {
+      if (!payload || typeof payload !== "object") return;
+
+      const relList = payload.relative || payload.rel || [];
+      renderRelative(relList);
+
+      const sessInfo = payload.session_info || payload.session || {};
+      applySessionInfo(sessInfo, payload, relList);
+
+      applyEnv(payload);
+    }
+
+    function handleMessage(evtData) {
+      try {
+        const payload = JSON.parse(evtData);
+        if (window.__applyCardBgAlpha) window.__applyCardBgAlpha(payload.card_bg_alpha);
+        applyPayload(payload);
+      } catch (e) {
+        console.error("Fehler beim Parsen der WebSocket-Nachricht:", e);
+      }
+    }
+
+    function connect() {
+      if (socket && socket.readyState === WebSocket.OPEN) return;
+
+      try {
+        socket = new WebSocket(WS_URL);
+      } catch (e) {
+        console.error("WebSocket-Verbindungsfehler (direkt beim Erzeugen):", e);
+        scheduleReconnect();
+        return;
+      }
+
+      socket.onopen = () => {
+        console.log("Relative-Overlay WebSocket verbunden");
+      };
+
+      socket.onmessage = (event) => {
+        handleMessage(event.data);
+      };
+
+      socket.onclose = () => {
+        console.log("Relative-Overlay WebSocket getrennt");
+        scheduleReconnect();
+      };
+
+      socket.onerror = (err) => {
+        console.error("WebSocket-Fehler:", err);
+      };
+    }
+
+    function scheduleReconnect() {
+      if (reconnectTimer) return;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        connect();
+      }, 1500);
+    }
+
+    if (OFFLINE_MODE) {
+      const demo = {
+        connected: true,
+        session_info: {
+          type: "Race",
+          time_left: 1800,
+          track_name: "Some Track",
+          series_name: "GT3",
+          sof: 2500,
+          car_count: 24,
+          incidents: 3,
+        },
+        air_temp: 22.3,
+        track_temp: 31.8,
+        track_wetness_idx: 1,
+        relative: [
+          { car_number: "23", pos: 5,  name: "Driver A", gap: "-1.2", car_class: "GT3", me: false, inc: 5 },
+          { car_number: "42", pos: 6,  name: "Ivo Laubscher", gap: "0.0",  car_class: "GT3", me: true,  inc: 7 },
+          { car_number: "99", pos: 7,  name: "Driver B", gap: "+0.8", car_class: "GT3", me: false, inc: 2 },
+        ],
+      };
+      applyPayload(demo);
+      autoFitScale();
+    } else {
+      connect();
+    }
+  </script>
+</body>
+</html>

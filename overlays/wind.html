@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <title>Wind Overlay</title>
+  <style>
+    html, body {
+      margin: 0; padding: 0;
+      background: transparent;
+      overflow: hidden;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #e5e7eb;
+    }
+
+    .wind-wrapper {
+      display: inline-block;
+      position: relative;
+      transform-origin: top left;
+      padding: 4px;
+    }
+
+    .wind-card {
+      display: inline-flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      padding: 10px 18px 12px;
+      border-radius: 14px;
+      background: rgba(0, 0, 0, var(--card-bg-alpha, 0.80));
+      box-shadow: none;
+      min-width: 90px;
+    }
+    .wind-card.edit-mode {
+      outline: 2px solid rgba(248,113,113,0.9);
+    }
+
+    .wind-label {
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      font-size: 10px;
+      opacity: 0.5;
+      align-self: flex-start;
+    }
+
+    /* Square area for rotating chevrons — fixed size so nothing overflows */
+    .chevron-area {
+      width: 60px;
+      height: 60px;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #chevrons {
+      position: absolute;
+      inset: 0;
+      transition: transform 0.4s cubic-bezier(0.34, 1.1, 0.64, 1);
+    }
+
+    .wind-speed {
+      font-size: 22px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      color: #fff;
+      letter-spacing: -0.5px;
+      line-height: 1;
+    }
+
+    .wind-resizer {
+      position: absolute;
+      right: -4px; bottom: -4px;
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: rgba(148,163,184,0.85);
+      cursor: nwse-resize;
+      display: none;
+    }
+    .wind-card.edit-mode ~ .wind-resizer,
+    .wind-wrapper.edit-mode .wind-resizer { display: block; }
+  </style>
+</head>
+<body>
+  <div id="wind-wrapper" class="wind-wrapper">
+    <div id="wind-card" class="wind-card">
+      <div class="wind-label">Wind</div>
+
+      <!-- 60×60 rotating area — chevrons point right by default.
+           JS rotates by (relDeg − 90°): headwind=0° → points up. -->
+      <div class="chevron-area">
+        <div id="chevrons">
+          <svg width="60" height="60" viewBox="0 0 60 60">
+            <!-- 3 chevrons pointing right, centered at (30,30).
+                 After rotate(-90deg): right→top = dark leads = closest to wind source. -->
+            <!-- Light (left → bottom after rotation) -->
+            <polygon points="10,12 22,30 10,48 10,39 17,30 10,21" fill="#7dd3fc" opacity="0.55"/>
+            <!-- Medium -->
+            <polygon points="22,12 34,30 22,48 22,39 29,30 22,21" fill="#3b82f6" opacity="0.80"/>
+            <!-- Dark (right → top after rotation = leading edge) -->
+            <polygon points="34,12 46,30 34,48 34,39 41,30 34,21" fill="#e0f2fe"/>
+          </svg>
+        </div>
+      </div>
+
+      <div id="wind-speed" class="wind-speed">--</div>
+    </div>
+    <div id="wind-resizer" class="wind-resizer"></div>
+  </div>
+
+  <script src="overlay-persistence.js"></script>
+  <script>
+    const _wsHost = (location.hostname && location.hostname !== 'localhost') ? location.hostname : '127.0.0.1';
+    const WS_URL  = `ws://${_wsHost}:8765`;
+
+    const windWrapper  = document.getElementById("wind-wrapper");
+    const windCard     = document.getElementById("wind-card");
+    const windResizer  = document.getElementById("wind-resizer");
+    const windSpeedEl  = document.getElementById("wind-speed");
+    const chevrons     = document.getElementById("chevrons");
+
+    window.setEditMode = function(edit) {
+      windCard.classList.toggle("edit-mode", !!edit);
+    };
+
+    let socket = null, reconnectTimer = null;
+    const persist = createOverlayPersistence('wind');
+    let windScale = 1;
+    let isResizing = false, resizeStartX = 0, resizeBaseWidth = null, resizeStartScale = 1;
+    let lastDeg = null;
+
+    window.addEventListener('DOMContentLoaded', () => {
+      const saved = persist.restore();
+      if (saved !== null) {
+        windScale = saved;
+        windWrapper.style.transform = `scale(${windScale})`;
+      }
+      chevrons.style.transform = `rotate(90deg)`;
+    });
+
+    function applyWind(payload) {
+      if (!payload || typeof payload !== "object") return;
+      const relDeg = payload.wind_rel;
+      const speed  = payload.wind_speed;
+
+      windSpeedEl.textContent = Number.isFinite(speed) ? Math.round(speed) : "--";
+
+      if (Number.isFinite(relDeg)) {
+        let target = relDeg + 90;
+        if (lastDeg !== null) {
+          let diff = target - lastDeg;
+          while (diff >  180) diff -= 360;
+          while (diff < -180) diff += 360;
+          target = lastDeg + diff;
+        }
+        lastDeg = target;
+        chevrons.style.transform = `rotate(${target}deg)`;
+      }
+    }
+
+    function handleMessage(data) {
+      try {
+        const payload = JSON.parse(data);
+        if (window.__applyCardBgAlpha) window.__applyCardBgAlpha(payload.card_bg_alpha);
+        applyWind(payload);
+      } catch(e) {}
+    }
+
+    function connect() {
+      if (socket && socket.readyState === WebSocket.OPEN) return;
+      try { socket = new WebSocket(WS_URL); } catch(e) { scheduleReconnect(); return; }
+      socket.onopen    = () => {};
+      socket.onmessage = (e) => handleMessage(e.data);
+      socket.onclose   = () => scheduleReconnect();
+      socket.onerror   = () => {};
+    }
+
+    function scheduleReconnect() {
+      if (reconnectTimer) return;
+      reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, 1500);
+    }
+
+    if (windWrapper && windResizer) {
+      windResizer.addEventListener("mousedown", (e) => {
+        isResizing = true;
+        resizeStartX = e.clientX;
+        resizeStartScale = windScale;
+        resizeBaseWidth = windWrapper.getBoundingClientRect().width / windScale;
+        document.addEventListener("mousemove", onMove);
+        document.addEventListener("mouseup", stopResize);
+        e.preventDefault(); e.stopPropagation();
+      });
+    }
+
+    function onMove(e) {
+      if (!isResizing || !resizeBaseWidth) return;
+      let s = Math.max(0.4, Math.min(3, resizeStartScale + (e.clientX - resizeStartX) / resizeBaseWidth));
+      windScale = s;
+      windWrapper.style.transform = `scale(${s})`;
+      persist.setScale(s);
+    }
+
+    function stopResize() {
+      if (!isResizing) return;
+      isResizing = false;
+      persist.saveScale(windScale);
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", stopResize);
+    }
+
+    connect();
+  </script>
+</body>
+</html>

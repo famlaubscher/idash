@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <title>Standings Overlay</title>
+  <style>
+    :root {
+      --bg-row-me: rgba(59, 130, 246, 0.18);
+      --text-main: #e5e7eb;
+      --text-dim:  #6b7280;
+      --accent-pos: #4ade80;
+      --radius-pill: 999px;
+      --font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      margin: 0; padding: 0;
+      width: 100%; height: 100%;
+      overflow: hidden;
+      background: transparent;
+      font-family: var(--font);
+      color: var(--text-main);
+    }
+
+    body {
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 8px;
+    }
+
+    /* ── Wrapper & resize ──────────────────────────── */
+    .standings-wrapper {
+      display: inline-block;
+      position: relative;
+      transform-origin: top left;
+    }
+
+    .standings-resizer {
+      position: absolute; top: 0; right: -4px;
+      width: 6px; height: 100%;
+      cursor: ew-resize; border-radius: 3px;
+      background: rgba(255,255,255,0.15);
+      opacity: 0; pointer-events: none;
+      transition: opacity .15s ease;
+    }
+    .standings-wrapper.edit-mode .standings-resizer {
+      opacity: 0.8; pointer-events: auto;
+    }
+
+    /* ── Card ──────────────────────────────────────── */
+    .overlay-root {
+      min-width: 540px;
+      max-width: 760px;
+      display: inline-flex;
+      flex-direction: column;
+      gap: 0;
+      border-radius: 14px;
+      background: rgba(0, 0, 0, var(--card-bg-alpha, 0.80));
+      box-shadow: none;
+      overflow: hidden;
+    }
+    .overlay-root.edit-mode {
+      outline: 2px solid rgba(248,113,113,0.9);
+    }
+
+    /* ── Session bar ───────────────────────────────── */
+    .session-bar {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 7px 14px;
+      background: rgba(255,255,255,0.04);
+      border-bottom: 1px solid rgba(255,255,255,0.07);
+      font-size: 12px;
+      color: var(--text-dim);
+      white-space: nowrap;
+      letter-spacing: 0.04em;
+    }
+    .session-row1 { display: flex; align-items: center; }
+    .session-row2 { display: flex; align-items: center; gap: 14px; }
+    .session-tag  { font-size: 12px; font-weight: 700; color: #e5e7eb; letter-spacing: 0.06em; }
+    .session-class { font-size: 12px; font-weight: 700; color: #e5e7eb; letter-spacing: 0.06em; }
+    .session-time { font-size: 12px; font-weight: 500; flex-shrink: 0; }
+
+    /* ── Table ─────────────────────────────────────── */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      table-layout: fixed;
+    }
+
+    thead tr {
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+
+    th, td {
+      padding: 2px 5px;
+      white-space: nowrap;
+      text-align: left;
+    }
+
+    th {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--text-dim);
+      font-weight: 500;
+      padding: 5px 5px 4px;
+    }
+
+    /* Column widths */
+    th.pos       { width: 34px; text-align: right; }
+    th.car       { width: 34px; text-align: right; }
+    th.brand     { width: 34px; text-align: center; }
+    th.name      { }
+    th.lic       { width: 76px; text-align: center; }
+    th.gap-front { width: 52px; text-align: right; }
+    th.gap-lead  { width: 62px; text-align: right; }
+    th.fast      { width: 76px; text-align: right; }
+    th.last      { width: 76px; text-align: right; }
+
+    /* Rows */
+    tbody tr {
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+    tbody tr:last-child { border-bottom: none; }
+
+    tbody tr.me-row {
+      background: var(--bg-row-me);
+    }
+    tbody tr.separator-row {
+      background: transparent;
+      border-bottom: none;
+    }
+    tbody tr.separator-row td {
+      padding: 2px 0;
+    }
+
+    /* Cells */
+    td.pos-cell, td.car-cell, td.gap-cell,
+    td.gap-front-cell, td.fast-cell, td.last-cell {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      font-size: 13px;
+    }
+    td.pos-cell {
+      font-weight: 700;
+      font-size: 13px;
+    }
+    td.car-cell {
+      font-weight: 600;
+      color: var(--text-dim);
+    }
+    .brand-logo {
+      height: 16px;
+      width: auto;
+      max-width: 36px;
+      object-fit: contain;
+      vertical-align: middle;
+      display: inline-block;
+      background: rgba(255,255,255,0.10);
+      border-radius: 3px;
+      padding: 1px 3px;
+    }
+    td.brand-cell {
+      text-align: center;
+      padding: 1px 3px;
+    }
+    td.name-cell {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    td.name-cell .you-tag { color: #bfdbfe; }
+
+    td.team-cell {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-main);
+      max-width: 120px;
+      white-space: nowrap;
+    }
+
+    td.lic-cell { text-align: center; }
+
+    /* Gap colors */
+    .gap-positive { color: var(--accent-pos); }
+
+    /* Fastest lap highlight */
+    .fast-global {
+      color: #e879f9;
+      font-weight: 700;
+    }
+
+    /* License badge */
+    .lic-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      height: 17px;
+      padding: 0 5px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.02em;
+    }
+    .lic-rookie { background: rgba(192,0,0,0.85);   color: #fff; }
+    .lic-d      { background: rgba(255,140,0,0.85); color: #111; }
+    .lic-c      { background: rgba(220,180,0,0.85); color: #111; }
+    .lic-b      { background: rgba(0,158,64,0.85);  color: #fff; }
+    .lic-a      { background: rgba(0,100,190,0.85); color: #fff; }
+    .lic-pro    { background: rgba(20,20,20,0.95);  color: #f9fafb; outline: 1px solid rgba(200,200,200,0.4); }
+
+    /* Multiclass: Klassen-Header */
+    tr.class-header-row td {
+      padding: 5px 8px 4px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .class-name  { font-size: 12px; font-weight: 800; margin-right: 10px; }
+    .class-sof   { color: #94a3b8; margin-right: 8px; font-size: 11px; }
+    .class-count { color: var(--text-dim); font-size: 10px; font-weight: 400; }
+
+    .empty-row td {
+      padding: 10px 6px;
+      text-align: center;
+      font-size: 13px;
+      color: var(--text-dim);
+    }
+  </style>
+</head>
+<body>
+  <div id="standings-wrapper" class="standings-wrapper">
+    <div id="standings-root" class="overlay-root">
+      <div class="session-bar">
+        <div class="session-row1">
+          <div class="session-tag" id="session-type">- | --:-- | -</div>
+        </div>
+        <div class="session-row2">
+          <div class="session-class" id="session-class"></div>
+          <div class="session-time" id="session-time">Cars: -</div>
+        </div>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th class="pos">Pos</th>
+            <th class="car">#</th>
+            <th class="brand"></th>
+            <th class="team" id="th-team" style="display:none">Team</th>
+            <th class="name">Driver</th>
+            <th class="lic">Lic / IR</th>
+            <th class="gap-front">Int</th>
+            <th class="gap-lead">Gap</th>
+            <th class="fast">Best</th>
+            <th class="last">Last</th>
+          </tr>
+        </thead>
+        <tbody id="standings-body">
+          <tr class="empty-row">
+            <td colspan="9">Warte auf iRacing&hellip;</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div id="standings-resizer" class="standings-resizer"></div>
+  </div>
+
+  <script src="overlay-persistence.js"></script>
+  <script>
+    const _wsHost = (location.hostname && location.hostname !== 'localhost') ? location.hostname : '127.0.0.1';
+    const WS_URL = `ws://${_wsHost}:8765`;
+
+    const tbody = document.getElementById("standings-body");
+    const standingsWrapper = document.getElementById("standings-wrapper");
+    const standingsResizer = document.getElementById("standings-resizer");
+    const standingsRoot    = document.getElementById("standings-root");
+    const persist = createOverlayPersistence('standings');
+
+    let socket = null, reconnectTimer = null;
+    let standingsScale = 1, isResizingStandings = false;
+    let standingsResizeStartX = 0, standingsStartScale = 1, standingsBaseWidth = null;
+
+    window.addEventListener('DOMContentLoaded', () => {
+      const saved = persist.restore();
+      if (saved !== null) {
+        standingsScale = saved;
+        if (standingsWrapper) standingsWrapper.style.transform = `scale(${standingsScale})`;
+      }
+    });
+
+    window.setEditMode = function(edit) {
+      standingsRoot?.classList.toggle("edit-mode", !!edit);
+      standingsWrapper?.classList.toggle("edit-mode", !!edit);
+    };
+
+    // ── Resize ───────────────────────────────────────
+    function onStandingsResizeMove(e) {
+      if (!isResizingStandings || !standingsBaseWidth || !standingsWrapper) return;
+      const dx = e.clientX - standingsResizeStartX;
+      let s = Math.max(0.5, Math.min(2.5, standingsStartScale + dx / standingsBaseWidth));
+      standingsScale = s;
+      standingsWrapper.style.transform = `scale(${s})`;
+      persist.setScale(s);
+    }
+    function stopStandingsResize() {
+      if (!isResizingStandings) return;
+      isResizingStandings = false;
+      persist.saveScale(standingsScale);
+      document.removeEventListener("mousemove", onStandingsResizeMove);
+      document.removeEventListener("mouseup", stopStandingsResize);
+    }
+    standingsResizer?.addEventListener("mousedown", (e) => {
+      isResizingStandings = true;
+      standingsResizeStartX = e.clientX;
+      standingsStartScale = standingsScale;
+      standingsBaseWidth = standingsWrapper.getBoundingClientRect().width / standingsScale;
+      document.addEventListener("mousemove", onStandingsResizeMove);
+      document.addEventListener("mouseup", stopStandingsResize);
+      e.preventDefault(); e.stopPropagation();
+    });
+
+    const BRAND_LOGO = {
+      "BMW": "bmw", "Porsche": "Porsche.png", "Ferrari": "ferrari.png",
+      "Mercedes": "mercedes", "Mercedes-AMG": "mercedes",
+      "Audi": "audi", "McLaren": "McLaren.png", "Lamborghini": "Lamborghini.png",
+      "Ford": "ford", "Chevrolet": "chevrolet", "Cadillac": "Cadillac.png",
+      "Acura": "acura", "Aston Martin": "aston", "Toyota": "toyota",
+      "Honda": "honda", "Dallara": "dallara.png", "Oreca": "oreca",
+      "Nissan": "nissan", "Volkswagen": "volkswagen", "Hyundai": "hyundai",
+      "Kia": "kia", "Mazda": "mazda", "Buick": "buick", "Pontiac": "pontiac",
+      "Renault": "renault", "Lotus": "lotus", "Ruf": "ruf", "Williams": "williams",
+      "Radical": "radical",
+    };
+
+    function carMark(brand) {
+      const logo = BRAND_LOGO[brand];
+      if (logo) {
+        const file = logo.includes('.') ? logo : logo + '.svg';
+        return `<img class="brand-logo" src="logos/${file}" alt="${brand}" onerror="this.style.display='none'">`;
+      }
+      return "";
+    }
+
+    // ── Formatters ────────────────────────────────────
+    function formatIRating(ir) {
+      if (!Number.isFinite(ir)) return "";
+      if (ir >= 9500) return "9.5K";
+      if (ir >= 1000) return (ir / 1000).toFixed(1) + "K";
+      return String(ir);
+    }
+
+    function formatSessionTime(seconds) {
+      if (!Number.isFinite(seconds)) return "--:--";
+      let sec = Math.max(0, Math.floor(seconds));
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = sec % 60;
+      const pad = n => String(n).padStart(2, "0");
+      return h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+    }
+
+    function formatLapTime(value) {
+      const num = Number(value);
+      if (!Number.isFinite(num) || num <= 0) return "--:--";
+      const totalMs = Math.round(num * 1000);
+      const m  = Math.floor(totalMs / 60000);
+      const s  = Math.floor((totalMs % 60000) / 1000);
+      const ms = totalMs % 1000;
+      const p2 = n => String(n).padStart(2, "0");
+      const p3 = n => String(n).padStart(3, "0");
+      return `${m}:${p2(s)}.${p3(ms)}`;
+    }
+
+    function licenseClass(lic) {
+      if (!lic) return "";
+      const c = String(lic).trim().toUpperCase().charAt(0);
+      if (c === "R") return "lic-rookie";
+      if (c === "D") return "lic-d";
+      if (c === "C") return "lic-c";
+      if (c === "B") return "lic-b";
+      if (c === "A") return "lic-a";
+      if (c === "P") return "lic-pro";
+      return "";
+    }
+
+    // ── Row builder ───────────────────────────────────
+    function buildRowHtml(row, classBest, isTeamRace) {
+      const carNum = row.car_number ?? row.carNumber ?? "";
+      const pos    = row._class_pos ?? row.pos ?? row.position ?? "";
+      const name   = row.name || "";
+      const lic    = row.license ?? row.lic ?? "";
+      const iraw   = Number.isFinite(row.irating) ? row.irating
+                   : (Number.isFinite(row.iRating) ? row.iRating : null);
+      const irStr  = iraw != null ? formatIRating(iraw) : "";
+      const licCls = licenseClass(lic);
+      const isMe   = !!row.me;
+      const brand  = row.car_brand || row.car_class || "";
+
+      const rawGapLead  = row._gap_lead_cls  ?? row.gap_lead  ?? "--.-";
+      const rawGapFront = row._gap_front_cls ?? row.gap_front ?? "--.-";
+      const gapLead  = typeof rawGapLead  === "string" ? rawGapLead.replace(/^[+-]/, "")  : String(rawGapLead);
+      const gapFront = typeof rawGapFront === "string" ? rawGapFront.replace(/^[+-]/, "") : String(rawGapFront);
+
+      const bestLapRaw    = row.best_lap ?? row.fastest_lap ?? row.bestLap ?? row.fastLap ?? null;
+      const lastLapRaw    = row.last_lap ?? row.lastLap ?? null;
+      const bestLapRawNum = Number(bestLapRaw);
+      const isClassBest   = classBest !== null && Number.isFinite(bestLapRawNum)
+                            && bestLapRawNum > 0.01 && Math.abs(bestLapRawNum - classBest) < 0.0005;
+      const bestLap = formatLapTime(bestLapRaw);
+      const lastLap = formatLapTime(lastLapRaw);
+
+      const gapLeadNum  = parseFloat(rawGapLead);
+      const gapFrontNum = parseFloat(rawGapFront);
+      const gapLeadCls  = (!isNaN(gapLeadNum)  && gapLeadNum  > 0.05) ? "gap-positive" : "";
+      const gapFrontCls = (!isNaN(gapFrontNum) && gapFrontNum > 0.05) ? "gap-positive" : "";
+
+      const licLetter = lic ? String(lic).trim().toUpperCase().charAt(0) : "";
+      const licText   = [licLetter, irStr].filter(Boolean).join(" ");
+      const licHtml   = (licText || licCls)
+        ? `<div class="lic-badge ${licCls}">${licText}</div>` : "";
+
+      const classColor = row.car_class_color || "#888888";
+      const teamName   = row.team_name || "";
+
+      return `
+        <tr class="${isMe ? "me-row" : ""}">
+          <td class="pos-cell" style="border-left:3px solid ${classColor};padding-left:6px;">${pos}</td>
+          <td class="car-cell">${carNum}</td>
+          <td class="brand-cell">${carMark(brand)}</td>
+          ${isTeamRace ? `<td class="team-cell" title="${teamName}">${teamName}</td>` : ""}
+          <td class="name-cell">${isMe ? `<span class="you-tag">${name}</span>` : `<span>${name}</span>`}</td>
+          <td class="lic-cell">${licHtml}</td>
+          <td class="gap-front-cell"><span class="${gapFrontCls}">${gapFront}</span></td>
+          <td class="gap-cell"><span class="${gapLeadCls}">${gapLead}</span></td>
+          <td class="fast-cell${isClassBest ? " fast-global" : ""}">${bestLap}</td>
+          <td class="last-cell">${lastLap}</td>
+        </tr>`;
+    }
+
+    // ── Render ────────────────────────────────────────
+    function renderStandings(list) {
+      if (!Array.isArray(list) || !list.length) {
+        tbody.innerHTML = `<tr class="empty-row"><td colspan="9">Warte auf iRacing&hellip;</td></tr>`;
+        return;
+      }
+
+      const sorted = [...list].sort((a, b) => {
+        const pa = Number(a.pos ?? a.position ?? 9999);
+        const pb = Number(b.pos ?? b.position ?? 9999);
+        return pa - pb;
+      });
+
+      const classOrder = [];
+      const classMap   = new Map();
+      for (const r of sorted) {
+        const cid = r.car_class_id ?? 0;
+        if (!classMap.has(cid)) {
+          classOrder.push(cid);
+          classMap.set(cid, { name: r.car_class_name || "", color: r.car_class_color || "#888888", sof: r.class_sof ?? null, rows: [] });
+        }
+        classMap.get(cid).rows.push(r);
+      }
+
+      const isMulticlass = classOrder.length > 1;
+
+      // Team-Race erkennen: mind. ein Fahrer hat einen TeamName der vom Fahrernamen abweicht
+      const isTeamRace = list.some(r => r.team_name && r.team_name !== r.name);
+      document.getElementById("th-team").style.display = isTeamRace ? "" : "none";
+
+      const rowsHtml = [];
+
+      for (const cid of classOrder) {
+        const cls       = classMap.get(cid);
+        const classRows = cls.rows;
+        const meIdx     = classRows.findIndex(r => !!r.me);
+
+        let classBest = null;
+        for (const r of classRows) {
+          const val = Number(r.best_lap ?? r.fastest_lap ?? null);
+          if (Number.isFinite(val) && val > 0.01 && (classBest === null || val < classBest)) classBest = val;
+        }
+
+        if (isMulticlass) {
+          const c = cls.color;
+          const CLASS_LABEL = {
+            "GTP": "GTP", "LMP1": "LMP1", "LMP2": "LMP2", "LMP3": "LMP3",
+            "GT1": "GT1", "GT2": "GT2", "GT3": "GT3", "GT4": "GT4",
+            "GTE": "GTE", "TCR": "TCR", "IMSA23": "GT3", "IMSA23GTP": "GTP",
+            "DALLARA P217": "LMP2", "DALLARAP217": "LMP2",
+          };
+          const rawName = cls.name.toUpperCase().replace(/\s+/g, " ").trim();
+          const displayName = CLASS_LABEL[rawName] || CLASS_LABEL[rawName.replace(/\s/g, "")] || cls.name;
+          rowsHtml.push(`
+            <tr class="class-header-row">
+              <td colspan="9" style="background:linear-gradient(90deg,${c}33 0%,transparent 70%);border-left:3px solid ${c};border-bottom:1px solid ${c}55;">
+                <span class="class-name" style="color:${c};">${displayName}</span>
+                ${cls.sof != null ? `<span class="class-sof">SOF ${cls.sof}</span>` : ""}
+                <span class="class-count">${classRows.length} Cars</span>
+              </td>
+            </tr>`);
+        }
+
+        const TOP_N = 3;
+        const seen  = new Set();
+        const viewRows = [];
+
+        for (const r of classRows.slice(0, TOP_N)) {
+          if (!seen.has(r.car_idx)) { seen.add(r.car_idx); viewRows.push(r); }
+        }
+
+        if (meIdx !== -1) {
+          const start  = Math.max(0, meIdx - 2);
+          const end    = Math.min(classRows.length, meIdx + 3);
+          const window = classRows.slice(start, end);
+          if (window.some(r => Number(r.pos ?? 9999) > TOP_N)) {
+            rowsHtml.push(`<tr class="separator-row"><td colspan="9"></td></tr>`);
+          }
+          for (const r of window) {
+            if (!seen.has(r.car_idx)) { seen.add(r.car_idx); viewRows.push(r); }
+          }
+        }
+
+        // Compute class-relative gaps
+        const leaderTime = classRows[0]?.total_time ?? null;
+        classRows.forEach((r, i) => {
+          r._class_pos = i + 1;
+          r._gap_lead_cls = (leaderTime != null && r.total_time != null)
+            ? (dt => dt <= 0.05 ? "0.0" : dt < 1e5 ? dt.toFixed(1) : "--.-")(Number(r.total_time) - Number(leaderTime))
+            : (r.gap_lead ?? "--.-");
+          const prevTime = classRows[i - 1]?.total_time ?? null;
+          r._gap_front_cls = (i > 0 && prevTime != null && r.total_time != null)
+            ? (dt => dt <= 0.05 ? "0.0" : dt < 1e5 ? dt.toFixed(1) : "--.-")(Number(r.total_time) - Number(prevTime))
+            : (i === 0 ? "0.0" : (r.gap_front ?? "--.-"));
+        });
+
+        for (const r of viewRows) rowsHtml.push(buildRowHtml(r, classBest, isTeamRace));
+      }
+
+      tbody.innerHTML = rowsHtml.join("");
+    }
+
+    // ── Session info ──────────────────────────────────
+    function shortSessionType(type) {
+      if (!type) return "-";
+      const t = String(type).toLowerCase();
+      if (t.includes("practice")) return "P";
+      if (t.includes("qual"))     return "Q";
+      if (t.includes("warm"))     return "W";
+      if (t.includes("race"))     return "R";
+      return String(type).charAt(0).toUpperCase();
+    }
+
+    function handleMessage(data) {
+      try {
+        const payload  = JSON.parse(data);
+        if (window.__applyCardBgAlpha) window.__applyCardBgAlpha(payload.card_bg_alpha);
+        const standings = payload.standings || [];
+        const info      = payload.session_info || payload.session || {};
+        const type       = info.type || info.session_type || "";
+        const timeLeft   = info.time_left ?? info.timeRemaining ?? null;
+        const trackName  = info.track_name || info.track || payload.track_name || "";
+        const seriesName = info.series_name || "";
+        const carCount   = Number.isFinite(info.car_count ?? info.num_cars ?? info.field_size ?? null)
+                          ? (info.car_count ?? info.num_cars ?? info.field_size)
+                          : (Array.isArray(standings) ? standings.length : null);
+
+        // Klasse(n) aus den ersten Rows lesen
+        const classNames = [];
+        if (Array.isArray(standings)) {
+          for (const r of standings) {
+            const cn = r.car_class_name || r.car_class || "";
+            if (cn && !classNames.includes(cn)) classNames.push(cn);
+          }
+        }
+
+        const tagEl  = document.getElementById("session-type");
+        const timeEl = document.getElementById("session-time");
+
+        if (tagEl) {
+          const parts = [shortSessionType(type)];
+          parts.push(Number.isFinite(timeLeft) ? formatSessionTime(timeLeft) : "--:--");
+          if (trackName) parts.push(trackName);
+          tagEl.textContent = parts.join(" | ");
+        }
+        const classEl = document.getElementById("session-class");
+        if (classEl) {
+          const carStr = Number.isFinite(carCount) ? " | Cars: " + carCount : "";
+          classEl.textContent = classNames.join(" / ") + carStr;
+          const timeEl2 = document.getElementById("session-time");
+          if (timeEl2) timeEl2.style.display = "none";
+        }
+        if (timeEl) timeEl.textContent = Number.isFinite(carCount) ? "Cars: " + carCount : "Cars: -";
+
+        if (!payload.connected) { renderStandings([]); return; }
+        renderStandings(standings);
+      } catch (e) {
+        console.error("WS parse error:", e);
+      }
+    }
+
+    // ── WebSocket ─────────────────────────────────────
+    function connect() {
+      if (socket && socket.readyState === WebSocket.OPEN) return;
+      try { socket = new WebSocket(WS_URL); } catch(e) { scheduleReconnect(); return; }
+      socket.onmessage = e => handleMessage(e.data);
+      socket.onclose   = () => scheduleReconnect();
+      socket.onerror   = () => {};
+    }
+    function scheduleReconnect() {
+      if (reconnectTimer) return;
+      reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, 1500);
+    }
+
+    connect();
+  </script>
+</body>
+</html>

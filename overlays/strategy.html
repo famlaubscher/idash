@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <title>Strategy Overlay</title>
+  <style>
+    html, body {
+      margin: 0; padding: 0;
+      background: transparent;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #e5e7eb;
+      overflow: hidden;
+    }
+    body {
+      display: flex;
+      align-items: flex-start;
+      justify-content: flex-start;
+      padding: 4px 4px 16px 4px;
+    }
+
+    /* ── Root card ─────────────────────────────────────────────────── */
+    .strategy-wrapper {
+      display: inline-block;
+      position: relative;
+      transform-origin: top left;
+    }
+    .strategy-root {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      padding: 8px 14px 8px 14px;
+      border-radius: 14px;
+      background: rgba(0,0,0,var(--card-bg-alpha,0.80));
+      min-width: 620px;
+      max-width: 920px;
+      position: relative;
+    }
+    .strategy-root.edit-mode {
+      outline: 2px solid rgba(248,113,113,0.9);
+    }
+
+    /* ── Sections ──────────────────────────────────────────────────── */
+    .section {
+      padding: 5px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.07);
+    }
+    .section:last-child { border-bottom: none; padding-bottom: 0; }
+    .section-title {
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      font-size: 10px;
+      color: #6b7280;
+      margin-bottom: 5px;
+    }
+
+    /* ── Generic metric ────────────────────────────────────────────── */
+    .metrics { display: flex; flex-wrap: wrap; gap: 6px 0; align-items: flex-start; }
+    .metric  { min-width: 0; padding-right: 20px; }
+    .mlabel  {
+      text-transform: uppercase; letter-spacing: 0.11em;
+      font-size: 10.5px; color: #9ca3af; margin-bottom: 1px;
+    }
+    .mval {
+      font-size: 20px; font-variant-numeric: tabular-nums;
+      font-weight: 600; color: #e5e7eb;
+      font-family: "Consolas", "SF Mono", Menlo, monospace;
+    }
+    .mval.lg  { font-size: 24px; }
+    .mval.sm  { font-size: 16px; }
+    .mhint {
+      font-size: 11px; color: #9ca3af; margin-top: 1px;
+      font-family: "Consolas", "SF Mono", Menlo, monospace;
+    }
+    .munit { font-size: 12px; color: #9ca3af; margin-left: 2px; }
+
+    /* ── Row 1: Stint Plan + Class Gap ─────────────────────────────── */
+    .row1 { display: flex; gap: 0; align-items: flex-start; }
+    .row1-stint { flex: 1; min-width: 0; }
+    .row1-gap {
+      flex: 0 0 auto;
+      min-width: 130px;
+      border-left: 1px solid rgba(255,255,255,0.08);
+      padding-left: 14px;
+      margin-left: 14px;
+    }
+    .gap-line {
+      display: flex; align-items: center; gap: 6px;
+      margin-bottom: 4px;
+    }
+    .gap-line:last-child { margin-bottom: 0; }
+    .gap-arrow { font-size: 12px; }
+    .gap-lbl { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.1em; color: #9ca3af; min-width: 40px; }
+    .gap-val {
+      font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums;
+      font-family: "Consolas", "SF Mono", Menlo, monospace;
+      min-width: 52px;
+    }
+
+    /* ── Row 2: Fuel | Lap Times ────────────────────────────────────── */
+    .row2 { display: flex; gap: 0; align-items: flex-start; }
+    .row2-fuel { flex: 0 0 auto; min-width: 220px; }
+    .row2-lap  {
+      flex: 1; min-width: 0;
+      border-left: 1px solid rgba(255,255,255,0.08);
+      padding-left: 14px;
+      margin-left: 14px;
+    }
+    .fuel-main-row { display: flex; align-items: center; gap: 6px; }
+    .fuel-bar-track {
+      width: 7px; height: 30px; border-radius: 999px;
+      background: rgba(255,255,255,0.07);
+      overflow: hidden; display: flex; align-items: flex-end;
+    }
+    .fuel-bar-fill {
+      width: 100%; height: 0%;
+      border-radius: 999px;
+      background: linear-gradient(to top, #0ea5e9, #38bdf8);
+      transition: height 0.1s linear;
+    }
+
+    /* ── Row 3: Race status + consumption ──────────────────────────── */
+    .row3 { display: flex; gap: 0; align-items: center; }
+    .row3-race { flex: 1; min-width: 0; }
+    .row3-cons {
+      flex: 0 0 auto;
+      border-left: 1px solid rgba(255,255,255,0.08);
+      padding-left: 14px;
+      margin-left: 14px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 2px;
+      min-width: 72px;
+    }
+    .cons-title {
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em;
+      color: #6b7280; white-space: nowrap;
+    }
+    .cons-indicator {
+      display: flex; flex-direction: row;
+      align-items: center; gap: 5px;
+    }
+    /* kompakter horizontaler Verbrauchs-Indikator */
+    .cons-trend {
+      font-size: 16px; font-weight: 700;
+      transition: color 0.3s;
+    }
+    .cons-val {
+      font-size: 17px; font-weight: 600; white-space: nowrap;
+      font-family: "Consolas", "SF Mono", Menlo, monospace;
+      color: #9ca3af;
+    }
+
+    /* ── Resizer ────────────────────────────────────────────────────── */
+    .strategy-resizer {
+      position: absolute; top: 0; right: 0;
+      width: 5px; height: 100%; cursor: ew-resize;
+      border-radius: 3px; background: rgba(255,255,255,0.15);
+      opacity: 0; pointer-events: none; transition: opacity 0.15s;
+    }
+    .strategy-wrapper.edit-mode .strategy-resizer { opacity: 0.8; pointer-events: auto; }
+
+    /* ── Colour helpers ─────────────────────────────────────────────── */
+    .good   { color: #4ade80; }
+    .warn   { color: #facc15; }
+    .bad    { color: #f97373; }
+    .purple { color: #c084fc; }
+    .blue   { color: #60a5fa; }
+  </style>
+</head>
+<body>
+<div id="strategy-wrapper" class="strategy-wrapper">
+  <div id="strategy-root" class="strategy-root">
+
+    <!-- ════════════════════════════════════════════════════════
+         ROW 1 — STINT PLAN  +  CLASS GAP
+         (Was muss das Team JETZT entscheiden?)
+    ════════════════════════════════════════════════════════ -->
+    <div class="section">
+      <div class="row1">
+        <div class="row1-stint">
+          <div class="section-title">Stint Plan</div>
+          <div class="metrics">
+            <div class="metric" style="min-width:90px;">
+              <div class="mlabel">Laps to stop</div>
+              <div class="mval lg" id="laps-to-stop">--</div>
+            </div>
+            <div class="metric" style="min-width:80px;">
+              <div class="mlabel">Stops left</div>
+              <div class="mval lg" id="stops-left">--</div>
+            </div>
+            <div class="metric" style="min-width:80px;">
+              <div class="mlabel">Pit on lap</div>
+              <div class="mval lg" id="pit-on-lap">--</div>
+            </div>
+            <div class="metric" style="min-width:110px;">
+              <div class="mlabel">Refuel this stop</div>
+              <div class="mval lg" id="refuel-next">--.-<span class="munit">L</span></div>
+              <div class="mhint" id="refuel-total-hint"></div>
+            </div>
+            <div class="metric" style="min-width:90px;">
+              <div class="mlabel">Fuel @ End</div>
+              <div class="mval lg" id="fuel-at-end">--.-<span class="munit">L</span></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════
+         ROW 2 — FUEL  |  LAP TIMES
+         (Laufender Status)
+    ════════════════════════════════════════════════════════ -->
+    <div class="section">
+      <div class="row2">
+        <!-- Fuel -->
+        <div class="row2-fuel">
+          <div class="section-title">Fuel</div>
+          <div class="metrics">
+            <div class="metric" style="min-width:110px;">
+              <div class="mlabel">Fuel left</div>
+              <div class="fuel-main-row">
+                <div class="mval lg" id="fuel-left">--.-<span class="munit">L</span></div>
+                <div class="fuel-bar-track">
+                  <div id="fuel-bar" class="fuel-bar-fill"></div>
+                </div>
+              </div>
+            </div>
+            <div class="metric" style="min-width:100px;">
+              <div class="mlabel">Laps on fuel</div>
+              <div class="mval" id="laps-on-fuel">--.-</div>
+              <div class="mhint" id="laps-on-fuel-hint"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Lap Times -->
+        <div class="row2-lap">
+          <div class="section-title">Lap Times</div>
+          <div class="metrics">
+            <div class="metric" style="min-width:120px;">
+              <div class="mlabel">Last lap</div>
+              <div class="mval lg" id="last-lap">-:--.---</div>
+            </div>
+            <div class="metric" style="min-width:120px;">
+              <div class="mlabel">Best lap</div>
+              <div class="mval lg purple" id="best-lap">-:--.---</div>
+            </div>
+            <div class="metric" style="min-width:120px;">
+              <div class="mlabel">Current lap</div>
+              <div class="mval lg" id="curr-lap">-:--.---</div>
+            </div>
+            <div class="metric" style="min-width:80px;">
+              <div class="mlabel">Δ Best</div>
+              <div class="mval" id="delta-best" style="font-size:16px;">---</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════
+         ROW 3 — RACE STATUS  +  CONSUMPTION
+         (Kontext / Hintergrund)
+    ════════════════════════════════════════════════════════ -->
+    <div class="section">
+      <div class="row3">
+        <div class="row3-race">
+          <div class="section-title">Race</div>
+          <div class="metrics">
+            <div class="metric" style="min-width:80px;">
+              <div class="mlabel">Class pos</div>
+              <div class="mval" id="class-pos">--</div>
+            </div>
+            <div class="metric" style="min-width:80px;">
+              <div class="mlabel">Overall</div>
+              <div class="mval" id="overall-pos">--</div>
+            </div>
+            <div class="metric" style="min-width:72px;">
+              <div class="mlabel">Incidents</div>
+              <div class="mval" id="team-inc">--</div>
+            </div>
+            <div class="metric" style="min-width:60px;">
+              <div class="mlabel">Tire</div>
+              <div class="mval" id="tire">--</div>
+            </div>
+            <div class="metric" style="min-width:82px;">
+              <div class="mlabel">Stint laps</div>
+              <div class="mval" id="stint-laps">--</div>
+            </div>
+            <div class="metric" style="min-width:90px;">
+              <div class="mlabel">Laps to finish</div>
+              <div class="mval" id="laps-to-finish">--.-</div>
+            </div>
+            <div class="metric" style="min-width:80px;">
+              <div class="mlabel">Fuel / Lap</div>
+              <div class="cons-indicator" style="margin-top:2px;">
+                <span class="cons-trend" id="cons-trend">—</span>
+                <span class="cons-val" id="cons-val">--.- L</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /strategy-root -->
+  <div id="strategy-resizer" class="strategy-resizer"></div>
+</div><!-- /strategy-wrapper -->
+
+<script src="overlay-persistence.js"></script>
+<script>
+  const _wsHost = (location.hostname && location.hostname !== 'localhost') ? location.hostname : '127.0.0.1';
+  const WS_URL = `ws://${_wsHost}:8765`;
+  const OFFLINE_MODE = false;
+
+  const $ = id => document.getElementById(id);
+
+  // Row 1 – Stint Plan
+  const lapsToStopEl    = $("laps-to-stop");
+  const stopsLeftEl     = $("stops-left");
+  const pitOnLapEl      = $("pit-on-lap");
+  const refuelNextEl    = $("refuel-next");
+  const refuelHintEl    = $("refuel-total-hint");
+  const fuelAtEndEl     = $("fuel-at-end");
+  // Row 1 – Class Gap
+  const gapAheadEl      = $("gap-ahead");
+  const gapBehindEl     = $("gap-behind");
+  // Row 2 – Fuel
+  const fuelLeftEl      = $("fuel-left");
+  const fuelBarEl       = $("fuel-bar");
+  const lapsOnFuelEl    = $("laps-on-fuel");
+  const lapsOnFuelHint  = $("laps-on-fuel-hint");
+  // Row 2 – Lap times
+  const lastLapEl       = $("last-lap");
+  const bestLapEl       = $("best-lap");
+  const currLapEl       = $("curr-lap");
+  const deltaBestEl     = $("delta-best");
+  // Row 3 – Race
+  const classPosEl      = $("class-pos");
+  const overallPosEl    = $("overall-pos");
+  const teamIncEl       = $("team-inc");
+  const tireEl          = $("tire");
+  const stintLapsEl     = $("stint-laps");
+  const airTempEl       = $("air-temp");
+  const trackTempEl     = $("track-temp");
+  const lapsToFinishEl  = $("laps-to-finish");
+  // Row 3 – Consumption
+  const consTrendEl     = $("cons-trend");
+  const consValEl       = $("cons-val");
+
+  const persist = createOverlayPersistence('strategy');
+
+  let socket = null;
+  let reconnectTimer = null;
+  let consLastChange = 0;
+  let consLastLap = null;
+  let strategyScale = 1;
+  let isResizing = false, resizeStartX = 0, startScale = 1, baseWidth = null;
+
+  // Position + Scale vom letzten Mal wiederherstellen
+  window.addEventListener('DOMContentLoaded', () => {
+      const saved = persist.restore();
+      if (saved !== null) {
+          strategyScale = saved;
+          const w = document.getElementById('strategy-wrapper');
+          if (w) w.style.transform = `scale(${strategyScale})`;
+      }
+  });
+
+  // ── Helpers ──────────────────────────────────────────────────────
+  function fmtLap(s) {
+    if (!Number.isFinite(s) || s <= 0) return "-:--.---";
+    const m = Math.floor(s / 60);
+    const r = s - m * 60;
+    return m + ":" + (r < 10 ? "0" : "") + r.toFixed(3);
+  }
+  function fmtDelta(s) {
+    if (!Number.isFinite(s)) return "---";
+    return (s >= 0 ? "+" : "-") + Math.abs(s).toFixed(3) + "s";
+  }
+  function fmtGap(s) {
+    return Number.isFinite(s) ? s.toFixed(1) : "--.-";
+  }
+  function fmtTemp(s) {
+    return Number.isFinite(s) ? s.toFixed(1) : "--";
+  }
+  function ordinal(n) {
+    if (!Number.isFinite(n)) return "--";
+    const v = n % 100;
+    const sfx = ["th","st","nd","rd"];
+    return n + (sfx[(v-20)%10] || sfx[v] || sfx[0]);
+  }
+  function setClass(el, map) {
+    Object.keys(map).forEach(k => el.classList.toggle(k, !!map[k]));
+  }
+
+  // ── Edit / resize ─────────────────────────────────────────────────
+  window.setEditMode = function(e) {
+    $("strategy-root")?.classList.toggle("edit-mode", !!e);
+    $("strategy-wrapper")?.classList.toggle("edit-mode", !!e);
+  };
+  $("strategy-resizer")?.addEventListener("mousedown", e => {
+    isResizing = true; resizeStartX = e.clientX; startScale = strategyScale;
+    const r = $("strategy-wrapper").getBoundingClientRect();
+    baseWidth = r.width / strategyScale;
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", stopResize);
+    e.preventDefault();
+  });
+  function onMove(e) {
+    if (!isResizing) return;
+    strategyScale = Math.max(0.5, Math.min(2.5, startScale + (e.clientX - resizeStartX) / baseWidth));
+    $("strategy-wrapper").style.transform = `scale(${strategyScale})`;
+    persist.setScale(strategyScale);
+  }
+  function stopResize() {
+    if (!isResizing) return;
+    isResizing = false;
+    persist.saveScale(strategyScale);
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", stopResize);
+  }
+
+  // ── Consumption indicator ─────────────────────────────────────────
+  function updateCons(prevRaw, currRaw, active) {
+    // Verbrauch ist immer als positive Menge zu verstehen (L/Runde).
+    const prev = Number.isFinite(prevRaw) ? Math.abs(prevRaw) : null;
+    const curr = Number.isFinite(currRaw) ? Math.abs(currRaw) : null;
+
+    if (consValEl) {
+      consValEl.classList.remove("good","warn","bad");
+      consValEl.textContent = curr !== null ? curr.toFixed(2) + " L" : "--.- L";
+    }
+    if (consTrendEl) {
+      consTrendEl.classList.remove("good","warn","bad");
+      if (prev === null || curr === null || prev <= 0 || !active) {
+        consTrendEl.textContent = "—";
+        consTrendEl.style.color = "#4b5563";
+      } else {
+        const rel = Math.abs(curr - prev) / prev;
+        if (rel <= 0.05) {
+          consTrendEl.textContent = "▬"; consTrendEl.style.color = "#f97316";
+          consValEl?.classList.add("warn");
+        } else if (curr > prev) {
+          consTrendEl.textContent = "▲"; consTrendEl.style.color = "#f97373";
+          consValEl?.classList.add("bad");
+        } else {
+          consTrendEl.textContent = "▼"; consTrendEl.style.color = "#4ade80";
+          consValEl?.classList.add("good");
+        }
+      }
+    }
+  }
+
+  // ── Main update ───────────────────────────────────────────────────
+  function apply(payload) {
+    if (!payload || typeof payload !== "object") return;
+    const s = payload.strategy || payload;
+
+    const fuel        = s.fuel_level         ?? null;
+    const tank        = s.fuel_tank_capacity ?? null;
+    const lapsOnFuel  = s.laps_remaining     ?? null;
+    const refuelNext  = s.refuel_next_stop   ?? null;
+    const fuelToEnd   = s.refuel_to_end      ?? null;
+    const fuelAtEnd   = s.fuel_at_end        ?? null;
+    const stopsLeft   = s.pit_stops_left     ?? null;
+    const lapNum      = s.lap_number         ?? null;
+    const pitOnLap    = s.pit_in_on_lap      ?? null;
+    const lapsFinish  = s.laps_to_finish     ?? null;
+    const lapFuelPrev = s.last_lap_fuel      ?? null;
+    const lapFuelCurr = s.this_lap_fuel      ?? null;
+
+    const lastLap     = s.last_lap_time      ?? null;
+    const bestLap     = s.best_lap_time      ?? null;
+    const currLap     = s.current_lap_time   ?? null;
+    const delta       = s.delta_to_best      ?? null;
+
+    const classPos    = s.class_position     ?? null;
+    const overallPos  = s.overall_position   ?? null;
+    const teamInc     = s.team_incidents     ?? null;
+    const tire        = s.tire_compound      ?? null;
+    const stintLaps   = s.stint_laps         ?? null;
+    const airTemp     = s.air_temp           ?? null;
+    const trackTemp   = s.track_temp         ?? null;
+    const gapAhead    = s.gap_class_ahead    ?? null;
+    const gapBehind   = s.gap_class_behind   ?? null;
+
+    // ── Row 1: Stint Plan ────────────────────────────────────────────
+    if (lapsToStopEl) {
+      let n = null;
+      if (Number.isFinite(pitOnLap) && Number.isFinite(lapNum)) n = pitOnLap - lapNum;
+      else if (Number.isFinite(lapsOnFuel)) n = Math.floor(lapsOnFuel);
+      lapsToStopEl.classList.remove("good","warn","bad");
+      if (Number.isFinite(n) && n >= 0) {
+        lapsToStopEl.textContent = n;
+        if (n <= 1)      lapsToStopEl.classList.add("bad");
+        else if (n <= 3) lapsToStopEl.classList.add("warn");
+      } else { lapsToStopEl.textContent = "--"; }
+    }
+    if (stopsLeftEl)  stopsLeftEl.textContent  = Number.isFinite(stopsLeft) ? stopsLeft : "--";
+    if (pitOnLapEl)   pitOnLapEl.textContent   = Number.isFinite(pitOnLap)  ? pitOnLap  : "--";
+
+    if (refuelNextEl)
+      refuelNextEl.innerHTML = Number.isFinite(refuelNext)
+        ? `${refuelNext.toFixed(2)}<span class="munit">L</span>`
+        : `--.-<span class="munit">L</span>`;
+    if (refuelHintEl)
+      refuelHintEl.textContent = Number.isFinite(fuelToEnd) ? `Total: ${fuelToEnd.toFixed(1)} L` : "";
+
+    if (fuelAtEndEl) {
+      fuelAtEndEl.classList.remove("good","warn","bad");
+      if (Number.isFinite(fuelAtEnd)) {
+        fuelAtEndEl.innerHTML = `${fuelAtEnd.toFixed(1)}<span class="munit">L</span>`;
+        if (fuelAtEnd < -0.1)     fuelAtEndEl.classList.add("bad");
+        else if (fuelAtEnd <= 5)  fuelAtEndEl.classList.add("warn");
+        else                      fuelAtEndEl.classList.add("good");
+      } else { fuelAtEndEl.innerHTML = `--.-<span class="munit">L</span>`; }
+    }
+
+    // ── Row 1: Class Gap ─────────────────────────────────────────────
+    if (gapAheadEl)  gapAheadEl.textContent  = fmtGap(gapAhead);
+    if (gapBehindEl) gapBehindEl.textContent = fmtGap(gapBehind);
+
+    // ── Row 2: Fuel ──────────────────────────────────────────────────
+    if (fuelLeftEl)
+      fuelLeftEl.innerHTML = Number.isFinite(fuel)
+        ? `${fuel.toFixed(1)}<span class="munit">L</span>`
+        : `--.-<span class="munit">L</span>`;
+
+    if (fuelBarEl) {
+      if (Number.isFinite(fuel) && Number.isFinite(tank) && tank > 0) {
+        fuelBarEl.style.height = (Math.max(0, Math.min(1, fuel / tank)) * 100).toFixed(0) + "%";
+      } else { fuelBarEl.style.height = "0%"; }
+    }
+
+    if (lapsOnFuelEl) lapsOnFuelEl.textContent = Number.isFinite(lapsOnFuel) ? lapsOnFuel.toFixed(1) : "--.-";
+    if (lapsOnFuelHint) {
+      lapsOnFuelHint.classList.remove("good","warn","bad");
+      if (Number.isFinite(lapsOnFuel)) {
+        if (lapsOnFuel <= 1.5)      { lapsOnFuelHint.textContent = "BOX THIS LAP"; lapsOnFuelHint.classList.add("bad"); }
+        else if (lapsOnFuel <= 3)   { lapsOnFuelHint.textContent = `Pit in ${lapsOnFuel.toFixed(1)} laps`; lapsOnFuelHint.classList.add("warn"); }
+        else if (Number.isFinite(pitOnLap) && Number.isFinite(lapNum) && pitOnLap - lapNum <= 5) {
+          lapsOnFuelHint.textContent = `Pit Lap ${pitOnLap}`;
+          lapsOnFuelHint.classList.add("good");
+        } else { lapsOnFuelHint.textContent = ""; }
+      } else { lapsOnFuelHint.textContent = ""; }
+    }
+
+    // ── Row 2: Lap Times ─────────────────────────────────────────────
+    if (lastLapEl) lastLapEl.textContent = fmtLap(lastLap);
+    if (bestLapEl) bestLapEl.textContent = fmtLap(bestLap);
+    if (currLapEl) currLapEl.textContent = fmtLap(currLap);
+    if (deltaBestEl) {
+      deltaBestEl.classList.remove("good","warn","bad");
+      deltaBestEl.textContent = fmtDelta(delta);
+      if (Number.isFinite(delta)) {
+        if (delta < -0.05)    deltaBestEl.classList.add("good");
+        else if (delta > 0.5) deltaBestEl.classList.add("bad");
+        else if (delta > 0.1) deltaBestEl.classList.add("warn");
+      }
+    }
+
+    // ── Row 3: Race ──────────────────────────────────────────────────
+    if (classPosEl) {
+      classPosEl.classList.remove("good","warn");
+      classPosEl.textContent = Number.isFinite(classPos) ? ordinal(classPos) : "--";
+      if (classPos === 1)     classPosEl.classList.add("good");
+      else if (classPos <= 3) classPosEl.classList.add("warn");
+    }
+    if (overallPosEl) overallPosEl.textContent = Number.isFinite(overallPos) ? ordinal(overallPos) : "--";
+
+    if (teamIncEl) {
+      teamIncEl.classList.remove("warn","bad");
+      teamIncEl.textContent = Number.isFinite(teamInc) ? teamInc + "x" : "--";
+      if (teamInc >= 17)    teamIncEl.classList.add("bad");
+      else if (teamInc >= 8) teamIncEl.classList.add("warn");
+    }
+    if (tireEl) {
+      tireEl.classList.remove("blue","warn");
+      tireEl.textContent = tire || "--";
+      if (tire === "Wet") tireEl.classList.add("blue");
+      else if (tire === "Dry") tireEl.classList.add("warn");
+    }
+    if (stintLapsEl) stintLapsEl.textContent = Number.isFinite(stintLaps) ? stintLaps : "--";
+    if (airTempEl)   airTempEl.innerHTML   = `${fmtTemp(airTemp)}<span class="munit">&deg;C</span>`;
+    if (trackTempEl) trackTempEl.innerHTML = `${fmtTemp(trackTemp)}<span class="munit">&deg;C</span>`;
+    if (lapsToFinishEl) lapsToFinishEl.textContent = Number.isFinite(lapsFinish) ? lapsFinish.toFixed(1) : "--.-";
+
+    // ── Consumption trend ─────────────────────────────────────────────
+    const now = Date.now();
+    if (Number.isFinite(lapFuelCurr)) {
+      if (Number.isFinite(lapNum) && lapNum !== consLastLap) {
+        consLastLap = lapNum; consLastChange = now;
+      }
+    }
+    updateCons(lapFuelPrev, lapFuelCurr, consLastChange && (now - consLastChange) <= 30000);
+  }
+
+  // ── WebSocket ─────────────────────────────────────────────────────
+  function connect() {
+    if (OFFLINE_MODE || (socket && socket.readyState === WebSocket.OPEN)) return;
+    try { socket = new WebSocket(WS_URL); } catch(e) { scheduleReconnect(); return; }
+    socket.onopen    = () => console.log("Strategy WS connected");
+    socket.onmessage = e => { try { const d = JSON.parse(e.data); if (window.__applyCardBgAlpha) window.__applyCardBgAlpha(d.card_bg_alpha); apply(d); } catch(ex) { console.error(ex); } };
+    socket.onclose   = () => scheduleReconnect();
+    socket.onerror   = e => console.error(e);
+  }
+  function scheduleReconnect() {
+    if (reconnectTimer) return;
+    reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, 1500);
+  }
+
+  if (OFFLINE_MODE) {
+    apply({ strategy: {
+      fuel_level: 30.8, fuel_tank_capacity: 100, laps_remaining: 8.8,
+      refuel_next_stop: 12.3, refuel_to_end: 18.5, fuel_at_end: 6.2,
+      pit_stops_left: 2, lap_number: 25, pit_in_on_lap: 33, laps_to_finish: 6.3,
+      last_lap_fuel: 3.0, this_lap_fuel: 3.3,
+      last_lap_time: 107.159, best_lap_time: 107.159, current_lap_time: 38.4,
+      delta_to_best: 0.473,
+      class_position: 2, overall_position: 35, team_incidents: 4,
+      tire_compound: "Dry", stint_laps: 12,
+      air_temp: 25.6, track_temp: 36.1,
+      gap_class_ahead: 4.7, gap_class_behind: 11.2,
+    }});
+  } else { connect(); }
+</script>
+</body>
+</html>

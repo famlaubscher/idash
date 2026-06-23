@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8" />
+    <title>iRacing HUD</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            background: transparent;
+            overflow: hidden;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            color: #fff;
+        }
+
+        .hud-wrapper {
+            display: inline-block;
+            position: relative;
+            transform-origin: top left;
+        }
+
+        .hud-resizer {
+            position: absolute;
+            top: 0;
+            right: -4px;
+            width: 6px;
+            height: 100%;
+            cursor: ew-resize;
+            border-radius: 3px;
+            background: rgba(255, 255, 255, 0.15);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.15s ease;
+        }
+
+        .hud-wrapper.edit-mode .hud-resizer {
+            opacity: 0.8;
+            pointer-events: auto;
+        }
+
+        .hud-container {
+            display: inline-flex;
+            flex-direction: column;
+            gap: 6px;
+            padding: 10px 14px;
+            border-radius: 14px;
+            background: rgba(0, 0, 0, var(--card-bg-alpha, 0.80));
+            box-shadow: none;
+            transition: box-shadow 0.15s ease, outline 0.15s ease;
+        }
+
+        /* Zusätzliche Markierung im Bearbeitungsmodus */
+        .hud-container.edit-mode {
+            outline: 2px solid rgba(255, 0, 0, 0.9);
+            box-shadow:
+                0 0 0 2px rgba(255, 0, 0, 0.7),
+                0 10px 24px rgba(0, 0, 0, 0.8);
+        }
+
+        .status {
+            display: none; /* Status-Badge (IRACING VERBUNDEN) ausgeblendet */
+            font-size: 11px;
+            padding: 3px 8px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.08);
+            align-self: flex-start;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        .status.connected {
+            background: rgba(46, 204, 113, 0.18);
+            color: #2ecc71;
+        }
+
+        .status.disconnected {
+            background: rgba(231, 76, 60, 0.18);
+            color: #e74c3c;
+        }
+
+        .row {
+            display: flex;
+            gap: 18px;
+            font-size: 11px;
+        }
+
+        .cell {
+            min-width: 70px;
+        }
+
+        .label {
+            color: #6b7280;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            font-size: 10px;
+            margin-bottom: 2px;
+        }
+
+        .value {
+            font-size: 16px;
+            font-variant-numeric: tabular-nums;
+            font-weight: 600;
+        }
+
+        .value.mono {
+            font-family: "Consolas", "SF Mono", Menlo, monospace;
+        }
+
+        /* Pedal-Balken */
+        .row.bars {
+            margin-top: 4px;
+            gap: 14px;
+            align-items: flex-end; /* Throttle/Brake-Bar & Steering-Kreis unten ausrichten */
+        }
+
+        .cell.pedal {
+            min-width: 90px;
+        }
+
+        .cell.steering {
+            min-width: 110px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-top: 0;
+        }
+
+        .cell.steering .label {
+            align-self: center;
+        }
+
+        .bar-track {
+            position: relative;
+            width: 100%;
+            height: 8px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.07);
+            overflow: hidden;
+        }
+
+        .bar-fill {
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 0%;
+            border-radius: 999px;
+            transition: width 0.05s linear;
+        }
+
+        .bar-fill.throttle {
+            background: linear-gradient(90deg, #22c55e, #a3e635);
+        }
+
+        .bar-fill.brake {
+            background: linear-gradient(90deg, #f97316, #ef4444);
+        }
+
+        /* Steering Wheel */
+        .steer-wheel-wrap {
+            width: 62px;
+            height: 62px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .steer-wheel-svg {
+            width: 62px;
+            height: auto;
+            transition: transform 0.04s linear;
+        }
+    </style>
+</head>
+<body>
+    <div id="hud-wrapper" class="hud-wrapper">
+        <div id="hud" class="hud-container">
+            <div id="status" class="status disconnected">iRacing nicht verbunden</div>
+
+            <div class="row">
+                <div class="cell">
+                    <div class="label">Speed</div>
+                    <div id="speed" class="value mono">--</div>
+                </div>
+                <div class="cell">
+                    <div class="label">Gear</div>
+                    <div id="gear" class="value mono">-</div>
+                </div>
+                <div class="cell">
+                    <div class="label">Brake Bias</div>
+                    <div id="brake-bias" class="value mono">--.-%</div>
+                </div>
+            </div>
+
+            <div class="row bars">
+                <div class="cell pedal">
+                    <div class="label">Throttle</div>
+                    <div class="bar-track">
+                        <div id="throttle-bar" class="bar-fill throttle"></div>
+                    </div>
+                </div>
+                <div class="cell pedal">
+                    <div class="label">Brake</div>
+                    <div class="bar-track">
+                        <div id="brake-bar" class="bar-fill brake"></div>
+                    </div>
+                </div>
+                <div class="cell steering">
+                    <div class="label">Steering</div>
+                    <div class="steer-wheel-wrap">
+                        <img id="steer-indicator" class="steer-wheel-svg" src="BMW_Lenkrad.png" alt="steering"/>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div id="hud-resizer" class="hud-resizer"></div>
+    </div>
+
+    <script src="overlay-persistence.js"></script>
+    <script>
+        const persist = createOverlayPersistence('hud');
+
+        let ws = null;
+        let reconnectTimeout = null;
+
+        const hudWrapper  = document.getElementById("hud-wrapper");
+        const hudResizer  = document.getElementById("hud-resizer");
+        const hudEl       = document.getElementById("hud");
+        const statusEl    = document.getElementById("status");
+        const speedEl     = document.getElementById("speed");
+        const gearEl      = document.getElementById("gear");
+        const brakeBiasEl = document.getElementById("brake-bias");
+        const throttleBar = document.getElementById("throttle-bar");
+        const brakeBar    = document.getElementById("brake-bar");
+        const steerIndicator = document.getElementById("steer-indicator");
+
+        let hudScale = 1;
+        let isResizingHud = false;
+        let resizeStartX = 0;
+        let startScale = 1;
+        let baseWidth = null;
+
+        window.addEventListener('DOMContentLoaded', () => {
+            const saved = persist.restore();
+            if (saved !== null) {
+                hudScale = saved;
+                if (hudWrapper) hudWrapper.style.transform = `scale(${hudScale})`;
+            }
+        });
+
+        // -----------------------------------------
+        // Steering-Konfiguration
+        // -----------------------------------------
+        //
+        // mode:
+        //  - "normalized": data.steering ist bereits in [-1, 1]
+        //  - "degrees":   data.steering ist physischer Lenkwinkel in Grad
+        //  - "radians":   data.steering ist physischer Lenkwinkel in Radiant
+        //
+        // maxDegreesPerSide:
+        //  - Dein physischer / sim-maximaler Lenkeinschlag pro Seite.
+        //    Beispiel: 900° Lenkrad = 450° pro Seite → 450
+        //
+        // gaugeMaxAngle:
+        //  - Maximaler Winkel, den die HUD-Nadel pro Seite anzeigen soll.
+        //    Beispiel: 90, 135, 180, 270, 450 ...
+        //
+        const STEERING_CONFIG = {
+    mode: "degrees",
+    maxDegreesPerSide: 450,  // wird live aus data.steering_max_deg überschrieben
+    gaugeMaxAngle: 180,
+    fineTuneFactor: 1.0
+};
+
+
+        // Optional von außen aus Python/Overlay anpassbar:
+        // z.B.: window.setSteeringConfig("degrees", 450, 180);
+        window.setSteeringConfig = function (mode, maxDegreesPerSide, gaugeMaxAngle) {
+            if (mode === "normalized" || mode === "degrees" || mode === "radians") {
+                STEERING_CONFIG.mode = mode;
+            }
+            const mdps = Number(maxDegreesPerSide);
+            if (Number.isFinite(mdps) && mdps > 0) {
+                STEERING_CONFIG.maxDegreesPerSide = mdps;
+            }
+            const gma = Number(gaugeMaxAngle);
+            if (Number.isFinite(gma) && gma > 0) {
+                STEERING_CONFIG.gaugeMaxAngle = gma;
+            }
+        };
+
+        // Rohwert → HUD-Winkel (-gaugeMaxAngle .. +gaugeMaxAngle)
+        function mapSteeringToAngle(rawSteering) {
+            let s = Number(rawSteering);
+            if (!Number.isFinite(s)) s = 0;
+
+            let norm; // normiert auf [-1, 1]
+
+            switch (STEERING_CONFIG.mode) {
+                case "degrees": {
+                    // s ist Winkel in Grad
+                    norm = s / STEERING_CONFIG.maxDegreesPerSide;
+                    break;
+                }
+                case "radians": {
+                    // s ist Winkel in Radiant
+                    const maxRad = STEERING_CONFIG.maxDegreesPerSide * Math.PI / 180;
+                    norm = s / maxRad;
+                    break;
+                }
+                case "normalized":
+                default: {
+                    // s ist schon in [-1, 1]
+                    norm = s;
+                    break;
+                }
+            }
+
+            // sauber auf [-1, 1] begrenzen
+            if (norm < -1) norm = -1;
+            if (norm > 1)  norm = 1;
+
+            // -1 = Voll links, +1 = Voll rechts → -gaugeMaxAngle .. +gaugeMaxAngle im HUD
+            // fineTuneFactor korrigiert die ~90° -> ~100° Abweichung der Nadel
+            const angle = -norm * STEERING_CONFIG.gaugeMaxAngle * STEERING_CONFIG.fineTuneFactor;
+            return angle;
+        }
+
+        // Wird von Python aufgerufen:
+        // window.setEditMode(true/false)
+        window.setEditMode = function(edit) {
+            if (hudEl) {
+                if (edit) {
+                    hudEl.classList.add("edit-mode");
+                } else {
+                    hudEl.classList.remove("edit-mode");
+                }
+            }
+            if (hudWrapper) {
+                if (edit) {
+                    hudWrapper.classList.add("edit-mode");
+                } else {
+                    hudWrapper.classList.remove("edit-mode");
+                }
+            }
+        };
+
+        function setDisconnected(msg) {
+            if (!statusEl) return;
+            statusEl.textContent = msg || "iRacing nicht verbunden";
+            statusEl.classList.remove("connected");
+            statusEl.classList.add("disconnected");
+        }
+
+        function setConnected() {
+            if (!statusEl) return;
+            statusEl.textContent = "iRacing verbunden";
+            statusEl.classList.remove("disconnected");
+            statusEl.classList.add("connected");
+        }
+
+        function applyTelemetry(data) {
+            if (data && data.connected === false) {
+                setDisconnected("iRacing nicht verbunden");
+            } else {
+                setConnected();
+            }
+
+            if (!data) return;
+
+            if (typeof data.speed !== "undefined" && speedEl) {
+                speedEl.textContent = Math.round(data.speed).toString();
+            }
+            if (typeof data.gear !== "undefined" && gearEl) {
+                // Bei iRacing ist 0 = Neutral, -1 = Rückwärtsgang
+                let gearText = data.gear === 0 ? "N" : data.gear === -1 ? "R" : data.gear.toString();
+                gearEl.textContent = gearText;
+            }
+            if (typeof data.brake_bias !== "undefined" && brakeBiasEl) {
+                let bb = Number(data.brake_bias);
+                if (!Number.isFinite(bb)) {
+                    brakeBiasEl.textContent = "--.-%";
+                } else {
+                    brakeBiasEl.textContent = bb.toFixed(1) + "%";
+                }
+            }
+
+            // Pedale
+            if (throttleBar && typeof data.throttle !== "undefined") {
+                let t = Number(data.throttle);
+                if (!Number.isFinite(t)) t = 0;
+                t = Math.min(Math.max(t, 0), 1);
+                throttleBar.style.width = (t * 100).toFixed(0) + "%";
+            }
+
+            if (brakeBar && typeof data.brake !== "undefined") {
+                let b = Number(data.brake);
+                if (!Number.isFinite(b)) b = 0;
+                b = Math.min(Math.max(b, 0), 1);
+                brakeBar.style.width = (b * 100).toFixed(0) + "%";
+            }
+
+            // Lenkwinkel-Anzeige
+            if (typeof data.steering_max_deg === "number" && data.steering_max_deg > 0) {
+                STEERING_CONFIG.maxDegreesPerSide = data.steering_max_deg;
+                STEERING_CONFIG.gaugeMaxAngle = data.steering_max_deg;
+            }
+            if (steerIndicator && typeof data.steering !== "undefined") {
+                const angle = mapSteeringToAngle(data.steering);
+                steerIndicator.style.transform = `rotate(${angle}deg)`;
+            }
+        }
+
+        function connect() {
+            try {
+                const _wsHost = (location.hostname && location.hostname !== 'localhost') ? location.hostname : '127.0.0.1';
+                ws = new WebSocket(`ws://${_wsHost}:8765`);
+            } catch (e) {
+                console.error("WebSocket Fehler:", e);
+                setDisconnected("Verbindungsfehler");
+                scheduleReconnect();
+                return;
+            }
+
+            ws.onopen = () => {
+                console.log("WebSocket verbunden");
+                setConnected();
+            };
+
+            ws.onclose = () => {
+                console.log("WebSocket getrennt");
+                setDisconnected("iRacing nicht verbunden");
+                scheduleReconnect();
+            };
+
+            ws.onerror = (err) => {
+                console.error("WebSocket Error:", err);
+                setDisconnected("WebSocket Fehler");
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (window.__applyCardBgAlpha) window.__applyCardBgAlpha(data.card_bg_alpha);
+                    applyTelemetry(data);
+                } catch (e) {
+                    console.error("Fehler beim Verarbeiten der Telemetrie:", e);
+                }
+            };
+        }
+
+        function scheduleReconnect() {
+            if (reconnectTimeout) {
+                clearTimeout(reconnectTimeout);
+            }
+            reconnectTimeout = setTimeout(connect, 2000);
+        }
+
+        // HUD-Resize per Maus (nur im Edit-Mode sinnvoll)
+        function onHudResize(e) {
+            if (!isResizingHud || !baseWidth) return;
+
+            const dx = e.clientX - resizeStartX;
+            let newScale = startScale + dx / baseWidth;
+
+            if (newScale < 0.5) newScale = 0.5;
+            if (newScale > 2.5) newScale = 2.5;
+
+            hudScale = newScale;
+            hudWrapper.style.transform = `scale(${hudScale})`;
+            persist.setScale(hudScale);
+        }
+
+        function stopHudResize() {
+            if (!isResizingHud) return;
+            isResizingHud = false;
+            persist.saveScale(hudScale);
+            document.removeEventListener("mousemove", onHudResize);
+            document.removeEventListener("mouseup", stopHudResize);
+        }
+
+        if (hudWrapper && hudResizer) {
+            hudResizer.addEventListener("mousedown", (e) => {
+                isResizingHud = true;
+                resizeStartX = e.clientX;
+                startScale = hudScale;
+
+                const rect = hudWrapper.getBoundingClientRect();
+                baseWidth = rect.width / hudScale;
+
+                document.addEventListener("mousemove", onHudResize);
+                document.addEventListener("mouseup", stopHudResize);
+
+                e.preventDefault();
+                e.stopPropagation();
+            });
+        }
+
+        // Live-Betrieb: direkt verbinden
+        setDisconnected("iRacing nicht verbunden");
+        connect();
+    </script>
+</body>
+</html>
