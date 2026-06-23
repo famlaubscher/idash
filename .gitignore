@@ -24,6 +24,8 @@ Thumbs.db
 overlay_layout.json
 strategy_cache.json
 app/strategy_cache.json
+pit_cache.json
+app/pit_cache.json
 *.log
 
 # Telemetry dumps

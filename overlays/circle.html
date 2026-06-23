@@ -1,0 +1,910 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <title>Circle of Doom</title>
+  <style>
+    html, body {
+      margin: 0; padding: 0;
+      background: transparent;
+      overflow: hidden;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #e5e7eb;
+    }
+
+    /* Bühne mit fester Koordinaten-Basis (480x480), per Scale zoombar */
+    .circle-wrapper {
+      display: inline-block;
+      position: relative;
+      transform-origin: top left;
+      padding: 4px;
+    }
+
+    .circle-stage {
+      position: relative;
+      width: 560px;
+      height: 560px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 50% 50%,
+                  rgba(8,10,18,var(--card-bg-alpha,0.80)) 0%,
+                  rgba(8,10,18,calc(var(--card-bg-alpha,0.80) * 0.55)) 62%,
+                  rgba(8,10,18,0) 73%);
+    }
+    .circle-stage.edit-mode {
+      outline: 2px solid rgba(248,113,113,0.9);
+      outline-offset: -2px;
+      border-radius: 50%;
+    }
+
+    svg.circle-svg {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+    }
+
+    /* Rotierende Gruppe (Punkt + Leader) — sanfte Bewegung */
+    .car-g {
+      transition: transform 0.16s linear;
+    }
+    .car-dot {
+      stroke: rgba(0,0,0,0.65);
+      stroke-width: 1.5;
+    }
+    .car-dot.me {
+      stroke: #fde047;
+      stroke-width: 2.5;
+    }
+    .car-lead {
+      stroke: rgba(255,255,255,0.18);
+      stroke-width: 1;
+    }
+    .car-g.pit .car-dot { opacity: 0.35; }
+    .car-g.pit .car-lead { opacity: 0.2; }
+
+    /* Pill-Labels (aufrecht, HTML) */
+    .car-label {
+      position: absolute;
+      left: 0; top: 0;
+      transform: translate(-50%, -50%);
+      transition: transform 0.16s linear;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 1px 6px 1px 5px;
+      border-radius: 6px;
+      background: rgba(15,18,28,0.92);
+      border-left: 3px solid #888;
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.35;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+      pointer-events: none;
+    }
+    .car-label .num { color: #f8fafc; }
+    .car-label .pos { color: #94a3b8; font-size: 10px; font-weight: 600; }
+    .car-label.me {
+      background: rgba(202,138,4,0.95);
+      border-left-color: #fde047;
+    }
+    .car-label.me .num { color: #fff; }
+    .car-label.me .pos { color: rgba(255,255,255,0.8); }
+    .car-label.pit { opacity: 0.45; }
+
+    /* Sektor- / Start-Ziel-Marken */
+    .sector-tick { stroke: rgba(148,163,184,0.55); stroke-width: 2; }
+    .sf-tick     { stroke: #f8fafc; stroke-width: 3; }
+    .ring        { fill: none; stroke: rgba(148,163,184,0.30); stroke-width: 2; }
+    .sector-lbl  {
+      fill: rgba(148,163,184,0.7);
+      font-size: 11px; font-weight: 700;
+      text-anchor: middle; dominant-baseline: middle;
+    }
+    .sf-lbl {
+      fill: #f8fafc; font-size: 11px; font-weight: 800;
+      text-anchor: middle; dominant-baseline: middle;
+      letter-spacing: 0.05em;
+    }
+
+    /* Boxen-Ein-/Ausfahrt-Marken (auto-gelernt aus OnPitRoad-Flanken) */
+    .pitmark-arc-in  { fill: none; stroke: #fb923c; stroke-width: 6; stroke-linecap: round; opacity: 0.9; }
+    .pitmark-arc-out { fill: none; stroke: #34d399; stroke-width: 6; stroke-linecap: round; opacity: 0.9; }
+    .pitmark-lbl {
+      font-size: 9px; font-weight: 800; letter-spacing: 0.06em;
+      text-anchor: middle; dominant-baseline: middle;
+    }
+    .pitmark-lbl.in  { fill: #fdba74; }
+    .pitmark-lbl.out { fill: #6ee7b7; }
+
+    /* Pit-Out-Indikator */
+    .pit-arc {
+      fill: none;
+      stroke: #fb923c;
+      stroke-width: 3;
+      stroke-dasharray: 5 5;
+      opacity: 0.85;
+      stroke-linecap: round;
+    }
+    .pit-ring {
+      fill: rgba(251,146,60,0.18);
+      stroke: #fb923c;
+      stroke-width: 2.5;
+    }
+    .pit-core { fill: #fde047; }
+    .pit-lead { stroke: rgba(251,146,60,0.6); stroke-width: 1.5; stroke-dasharray: 3 3; }
+    .pit-label {
+      position: absolute;
+      left: 0; top: 0;
+      transform: translate(-50%, -50%);
+      transition: transform 0.16s linear;
+      display: flex; flex-direction: column; align-items: center;
+      gap: 0;
+      padding: 2px 8px;
+      border-radius: 7px;
+      background: rgba(124,45,18,0.95);
+      border: 1px solid #fb923c;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.55);
+      white-space: nowrap;
+      pointer-events: none;
+      z-index: 5;
+    }
+    .pit-label .pit-title {
+      font-size: 9px; font-weight: 800; letter-spacing: 0.08em;
+      color: #fdba74; text-transform: uppercase;
+    }
+    .pit-label .pit-time {
+      font-size: 14px; font-weight: 800; color: #fff;
+      font-variant-numeric: tabular-nums; line-height: 1.1;
+    }
+    .pit-label .pit-detail {
+      font-size: 9px; font-weight: 600; color: #fed7aa;
+      font-variant-numeric: tabular-nums; letter-spacing: 0.02em;
+    }
+    .pit-label .pit-near { font-size: 10px; font-weight: 700; color: #fde047; }
+
+    /* Zentrum */
+    .center-box {
+      position: absolute;
+      left: 50%; top: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      pointer-events: none;
+    }
+    .center-track {
+      font-size: 13px; font-weight: 700; color: #e2e8f0;
+      max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .center-sub {
+      font-size: 10px; color: #64748b; text-transform: uppercase; letter-spacing: 0.12em;
+      margin-top: 2px;
+    }
+    .center-wait { font-size: 11px; color: #475569; }
+
+    /* Pit-Phasen-Label in der Kreismitte */
+    .center-pit {
+      font-size: 19px; font-weight: 900; letter-spacing: 0.14em;
+      text-transform: uppercase; margin-bottom: 3px;
+      color: #fb923c;                         /* PIT IN = orange */
+      text-shadow: 0 1px 3px rgba(0,0,0,0.6);
+    }
+    .center-pit.box { color: #fde047; }       /* steht = gelb */
+    .center-pit.out { color: #34d399; }       /* PIT OUT = grün */
+
+    /* Kalibrier-Panel */
+    .cal-panel {
+      position: absolute;
+      left: 50%; top: 50%;
+      transform: translate(-50%, -50%);
+      width: 240px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: rgba(8,10,18,0.92);
+      border: 1px solid rgba(96,165,250,0.45);
+      box-shadow: 0 4px 18px rgba(0,0,0,0.6);
+      pointer-events: none;
+    }
+    .cal-title {
+      font-size: 11px; font-weight: 900; letter-spacing: 0.14em;
+      color: #93c5fd; text-align: center; margin-bottom: 9px;
+    }
+    .cal-step {
+      display: flex; align-items: center; gap: 7px;
+      font-size: 11px; color: #cbd5e1; margin: 5px 0;
+    }
+    .cal-step .cal-box {
+      width: 13px; height: 13px; flex: 0 0 13px;
+      border-radius: 4px; border: 1.5px solid rgba(148,163,184,0.6);
+      background: transparent;
+    }
+    .cal-step.done .cal-box { background: #34d399; border-color: #34d399; }
+    .cal-step.done .cal-txt { color: #e2e8f0; }
+    .cal-step .cal-txt { flex: 1; }
+    .cal-step .cal-val {
+      font-variant-numeric: tabular-nums; font-weight: 700; color: #6ee7b7; font-size: 10px;
+    }
+    .cal-event {
+      margin-top: 9px; padding-top: 8px;
+      border-top: 1px solid rgba(255,255,255,0.08);
+      font-size: 10px; color: #fbbf24; text-align: center; min-height: 12px;
+    }
+
+    .circle-resizer {
+      position: absolute;
+      right: 6px; bottom: 6px;
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      background: rgba(148,163,184,0.85);
+      cursor: nwse-resize;
+      display: none;
+      z-index: 10;
+    }
+    .circle-stage.edit-mode + .circle-resizer { display: block; }
+  </style>
+</head>
+<body>
+  <div id="circle-wrapper" class="circle-wrapper">
+    <div id="circle-stage" class="circle-stage">
+      <svg id="circle-svg" class="circle-svg" viewBox="0 0 560 560">
+        <circle class="ring" cx="280" cy="280" r="165"></circle>
+        <g id="sectors-g"></g>
+        <g id="pitmarks-g"></g>
+        <g id="cars-g"></g>
+        <g id="pit-g" style="display:none">
+          <path id="pit-arc" class="pit-arc"></path>
+          <line id="pit-lead" class="pit-lead"></line>
+          <circle id="pit-ring" class="pit-ring" r="9"></circle>
+          <circle id="pit-core" class="pit-core" r="3"></circle>
+        </g>
+      </svg>
+      <div id="labels-layer"></div>
+      <div id="pit-label" class="pit-label" style="display:none">
+        <span class="pit-title">Box-Ausfahrt</span>
+        <span class="pit-time" id="pit-time">--</span>
+        <span class="pit-detail" id="pit-detail"></span>
+        <span class="pit-near" id="pit-near"></span>
+      </div>
+      <div class="center-box">
+        <div id="center-pit" class="center-pit" style="display:none"></div>
+        <div id="center-track" class="center-track"></div>
+        <div id="center-sub" class="center-sub"></div>
+      </div>
+
+      <!-- Kalibrier-Panel (nur im Kalibrier-Modus sichtbar) -->
+      <div id="cal-panel" class="cal-panel" style="display:none">
+        <div class="cal-title">PIT-KALIBRIERUNG</div>
+        <div class="cal-step" id="cal-s1"><span class="cal-box"></span><span class="cal-txt">1 · Boxen-Durchfahrt (ohne Halt)</span><span class="cal-val"></span></div>
+        <div class="cal-step" id="cal-s2"><span class="cal-box"></span><span class="cal-txt">2 · Tankstopp (leer → voll)</span><span class="cal-val"></span></div>
+        <div class="cal-step" id="cal-s3"><span class="cal-box"></span><span class="cal-txt">3 · Reifen-only (kein Tanken)</span><span class="cal-val"></span></div>
+        <div class="cal-event" id="cal-event"></div>
+      </div>
+    </div>
+    <div id="circle-resizer" class="circle-resizer"></div>
+  </div>
+
+  <script src="overlay-persistence.js"></script>
+  <script>
+    "use strict";
+
+    // ---- Geometrie ----
+    const CX = 280, CY = 280, R = 165;
+    const LABEL_BASE   = 24;   // Abstand der ersten Lane von der Ringlinie
+    const LANE_STEP    = 17;   // radialer Abstand zwischen Lanes
+    const MAX_LANES    = 4;
+    const LANE_GAP_PX  = 6;    // tangentialer Mindestabstand zwischen Pills
+
+    // ---- Pit-Out-Indikator: ANNAHMEN ----
+    // Der Indikator zeigt, wo du relativ zum Feld wieder herauskommst, wenn du
+    // JETZT an die Box gehst. Zeitverlust:
+    //   T_pit = pitLaneLossSec + max(Tankzeit, Reifenwechsel)
+    // (Tanken und Reifenwechsel laufen in iRacing gleichzeitig.)
+    //
+    // Diese Werte sind nur DEFAULTS — einstellbar über overlay_config.json
+    // im Abschnitt "pit" (snake_case-Keys), z.B.:
+    //   "pit": { "pit_lane_loss_sec": 19, "tire_change_sec": 10, "fuel_rate_lps": 2.5 }
+    const PIT_CONFIG = {
+      enabled:         true,
+      fuelRateLps:     2.84,   // Betankung: Liter pro Sekunde (108 L in 38 s)
+      tireChangeSec:   18.0,   // Dauer kompletter Reifenwechsel (alle 4)
+      changeTires:     true,   // Reifen wechseln? (false = nur tanken)
+      pitLaneLossSec:  20.0,   // Zeitverlust durch Boxengasse (Durchfahrt) ggü. Strecke
+      manualRefuelL:   null,   // feste Tankmenge in L (überschreibt IMMER, auch live)
+      refuelFallbackL: null,   // Tankmenge, wenn keine Fuel-Telemetrie da ist (z.B. Replay)
+      refLapFallbackSec: 100.0, // Ersatz-Rundenzeit, solange keine echte vorliegt
+    };
+    // Bekannte Keys, die aus overlay_config.json["pit"] übernommen werden dürfen.
+    const PIT_CONFIG_KEYS = Object.keys(PIT_CONFIG);
+    function applyPitConfig(cfg) {
+      if (!cfg || typeof cfg !== "object") return;
+      for (const k of PIT_CONFIG_KEYS) {
+        if (k in cfg) PIT_CONFIG[k] = cfg[k];
+      }
+    }
+
+    const SVG_NS = "http://www.w3.org/2000/svg";
+
+    const wrapper   = document.getElementById("circle-wrapper");
+    const stage     = document.getElementById("circle-stage");
+    const resizer   = document.getElementById("circle-resizer");
+    const sectorsG  = document.getElementById("sectors-g");
+    const pitmarksG = document.getElementById("pitmarks-g");
+    const carsG     = document.getElementById("cars-g");
+    const labelsEl  = document.getElementById("labels-layer");
+    const centerTrk = document.getElementById("center-track");
+    const centerSub = document.getElementById("center-sub");
+    const centerPit = document.getElementById("center-pit");
+    const calPanel  = document.getElementById("cal-panel");
+    const calEvent  = document.getElementById("cal-event");
+    const calSteps  = {
+      pit_loss:  document.getElementById("cal-s1"),
+      fuel_rate: document.getElementById("cal-s2"),
+      tire_time: document.getElementById("cal-s3"),
+    };
+    const pitG      = document.getElementById("pit-g");
+    const pitArc    = document.getElementById("pit-arc");
+    const pitLead   = document.getElementById("pit-lead");
+    const pitRing   = document.getElementById("pit-ring");
+    const pitCore   = document.getElementById("pit-core");
+    const pitLabel  = document.getElementById("pit-label");
+    const pitTimeEl = document.getElementById("pit-time");
+    const pitDetailEl = document.getElementById("pit-detail");
+    const pitNearEl = document.getElementById("pit-near");
+
+    // ---- Edit-Mode (vom Overlay-Manager aufgerufen) ----
+    window.setEditMode = function (edit) {
+      stage.classList.toggle("edit-mode", !!edit);
+    };
+
+    // ---- Persistenz / Scale ----
+    const persist = createOverlayPersistence("circle");
+    let scale = 1;
+    let isResizing = false, resizeStartX = 0, resizeBaseWidth = null, resizeStartScale = 1;
+
+    window.addEventListener("DOMContentLoaded", () => {
+      const saved = persist.restore();
+      if (saved !== null) {
+        scale = saved;
+        wrapper.style.transform = `scale(${scale})`;
+      }
+    });
+
+    // ---- Hilfsfunktionen Geometrie ----
+    // pct=0 -> oben (12 Uhr), im Uhrzeigersinn.
+    function pointAt(pct, radius) {
+      return xyFromAngle(pct * 2 * Math.PI, radius);
+    }
+    function xyFromAngle(a, radius) {     // a in rad, 0 = oben, im Uhrzeigersinn
+      return { x: CX + radius * Math.sin(a), y: CY - radius * Math.cos(a), angle: a };
+    }
+    function circDist(a, b) {             // kürzeste Distanz zweier pct (0..1) auf dem Ring
+      let d = Math.abs(a - b) % 1;
+      return Math.min(d, 1 - d);
+    }
+
+    // Zeit -> Distanz: mappt eine EstTime (Sek. auf der Runde) auf die zugehörige
+    // pct-Position, anhand der (pct,est)-Stützpunkte des Feldes. Das korrigiert die
+    // Distanz-vs-Zeit-Verzerrung (Geraden vs. Kurven) — der Ghost sitzt zeit-korrekt.
+    function estToPct(target, samples, refLap) {
+      const n = samples.length;
+      if (n === 0 || !(refLap > 0.5)) return null;
+      const s = samples.slice().sort((a, b) => a.est - b.est);
+      if (n === 1) return s[0].pct;
+      const t = ((target % refLap) + refLap) % refLap;       // in [0, refLap)
+      const lerp = (a, b, f) => (((a.pct + f * (b.pct - a.pct)) % 1) + 1) % 1;
+      for (let i = 0; i < n - 1; i++) {
+        if (t >= s[i].est && t <= s[i + 1].est) {
+          const span = (s[i + 1].est - s[i].est) || 1;
+          return lerp(s[i], s[i + 1], (t - s[i].est) / span);
+        }
+      }
+      // Naht-Segment: zwischen letztem und erstem (+ refLap)
+      const a = s[n - 1], b = { pct: s[0].pct + 1, est: s[0].est + refLap };
+      const span = (b.est - a.est) || 1;
+      const tt = (t >= a.est) ? t : t + refLap;
+      return lerp(a, b, (tt - a.est) / span);
+    }
+
+    // ---- Sektoren + Start/Ziel zeichnen ----
+    let lastSectorKey = "";
+    function renderSectors(sectors) {
+      const key = JSON.stringify(sectors || []);
+      if (key === lastSectorKey) return;
+      lastSectorKey = key;
+      sectorsG.textContent = "";
+
+      // Start/Ziel immer bei pct 0 (oben)
+      addTick(0, true);
+      addLabel(0, "S/F", true);
+
+      (sectors || []).forEach((pct, i) => {
+        if (pct <= 0.0001) return;          // 0.0 ist Start/Ziel
+        addTick(pct, false);
+        addLabel(pct, "S" + (i + 1), false);
+      });
+    }
+
+    function addTick(pct, isSF) {
+      const inner = pointAt(pct, R - 9);
+      const outer = pointAt(pct, R + 9);
+      const line = document.createElementNS(SVG_NS, "line");
+      line.setAttribute("x1", inner.x); line.setAttribute("y1", inner.y);
+      line.setAttribute("x2", outer.x); line.setAttribute("y2", outer.y);
+      line.setAttribute("class", isSF ? "sf-tick" : "sector-tick");
+      sectorsG.appendChild(line);
+    }
+
+    function addLabel(pct, text, isSF) {
+      const p = pointAt(pct, R + 22);
+      const t = document.createElementNS(SVG_NS, "text");
+      t.setAttribute("x", p.x); t.setAttribute("y", p.y);
+      t.setAttribute("class", isSF ? "sf-lbl" : "sector-lbl");
+      t.textContent = text;
+      sectorsG.appendChild(t);
+    }
+
+    // ---- Boxen-Ein-/Ausfahrt-Marken zeichnen ----
+    let lastPitMarkKey = "";
+    function renderPitMarks(entryPct, exitPct) {
+      const key = `${entryPct}|${exitPct}`;
+      if (key === lastPitMarkKey) return;        // nur bei Änderung neu zeichnen
+      lastPitMarkKey = key;
+      pitmarksG.textContent = "";
+      if (Number.isFinite(entryPct)) addPitMark(entryPct, "BOX", "in");
+      if (Number.isFinite(exitPct))  addPitMark(exitPct, "EXIT", "out");
+    }
+
+    function addPitMark(pct, text, kind) {
+      // kurzes, dickes Bogensegment auf der Ringlinie (~7°)
+      const half = (3.5 / 180) * Math.PI;
+      const a = pct * 2 * Math.PI;
+      const s = xyFromAngle(a - half, R);
+      const e = xyFromAngle(a + half, R);
+      const arc = document.createElementNS(SVG_NS, "path");
+      arc.setAttribute("d", `M ${s.x} ${s.y} A ${R} ${R} 0 0 1 ${e.x} ${e.y}`);
+      arc.setAttribute("class", kind === "in" ? "pitmark-arc-in" : "pitmark-arc-out");
+      pitmarksG.appendChild(arc);
+
+      // Label leicht innerhalb der Ringlinie (liegt im SVG → hinter den Auto-Pills)
+      const p = xyFromAngle(a, R - 15);
+      const t = document.createElementNS(SVG_NS, "text");
+      t.setAttribute("x", p.x); t.setAttribute("y", p.y);
+      t.setAttribute("class", "pitmark-lbl " + kind);
+      t.textContent = text;
+      pitmarksG.appendChild(t);
+    }
+
+    // ---- Auto-Elemente (gecacht je car_idx) ----
+    const dotGroups = new Map();   // car_idx -> <g>
+    const labelEls  = new Map();   // car_idx -> div
+
+    function ensureCar(idx) {
+      let g = dotGroups.get(idx);
+      if (!g) {
+        g = document.createElementNS(SVG_NS, "g");
+        g.setAttribute("class", "car-g");
+        const lead = document.createElementNS(SVG_NS, "line");
+        lead.setAttribute("class", "car-lead");
+        lead.setAttribute("x1", 0); lead.setAttribute("y1", -R);
+        lead.setAttribute("x2", 0); lead.setAttribute("y2", -R);
+        const dot = document.createElementNS(SVG_NS, "circle");
+        dot.setAttribute("class", "car-dot");
+        dot.setAttribute("cx", 0); dot.setAttribute("cy", -R);
+        dot.setAttribute("r", 6);
+        g.appendChild(lead); g.appendChild(dot);
+        carsG.appendChild(g);
+        dotGroups.set(idx, g);
+      }
+      let lab = labelEls.get(idx);
+      if (!lab) {
+        lab = document.createElement("div");
+        lab.className = "car-label";
+        lab.innerHTML = '<span class="num"></span><span class="pos"></span>';
+        labelsEl.appendChild(lab);
+        labelEls.set(idx, lab);
+      }
+      return { g, lab };
+    }
+
+    function removeCar(idx) {
+      const g = dotGroups.get(idx);
+      if (g) { g.remove(); dotGroups.delete(idx); }
+      const lab = labelEls.get(idx);
+      if (lab) { lab.remove(); labelEls.delete(idx); }
+    }
+
+    // ---- Pit-Out-Indikator ----
+    // Liefert {tPit, offset, ghostPct, ...} oder null wenn nicht berechenbar.
+    function computePitGhost(myPct, refLap, strategy) {
+      if (!PIT_CONFIG.enabled) return null;
+      if (!Number.isFinite(myPct)) return null;
+
+      // Referenz-Rundenzeit: Telemetrie -> Strategie -> Config-Fallback
+      let lap = refLap;
+      if (!(Number.isFinite(lap) && lap > 0.5) && strategy) {
+        if (Number.isFinite(strategy.best_lap_time) && strategy.best_lap_time > 0.5) lap = strategy.best_lap_time;
+        else if (Number.isFinite(strategy.last_lap_time) && strategy.last_lap_time > 0.5) lap = strategy.last_lap_time;
+      }
+      if (!(Number.isFinite(lap) && lap > 0.5)) lap = PIT_CONFIG.refLapFallbackSec;
+      if (!(Number.isFinite(lap) && lap > 0.5)) return null;
+      refLap = lap;
+
+      // Tankmenge: manueller Override -> Telemetrie -> Fallback (z.B. Replay ohne Fuel-Daten)
+      let liters = PIT_CONFIG.manualRefuelL;            // harter Override (auch live)
+      let litersFromData = false;
+      if (liters == null && strategy && Number.isFinite(strategy.refuel_next_stop)) {
+        liters = strategy.refuel_next_stop;             // echte Telemetrie
+        litersFromData = true;
+      }
+      if (liters == null && Number.isFinite(PIT_CONFIG.refuelFallbackL)) {
+        liters = PIT_CONFIG.refuelFallbackL;            // Fallback, wenn keine Fuel-Daten
+      }
+      if (!Number.isFinite(liters) || liters < 0) liters = 0;
+
+      const refuelSec = PIT_CONFIG.fuelRateLps > 0 ? liters / PIT_CONFIG.fuelRateLps : 0;
+      const tireSec   = PIT_CONFIG.changeTires ? PIT_CONFIG.tireChangeSec : 0;
+      const standing  = Math.max(refuelSec, tireSec);        // Standzeit (Tanken ∥ Reifen)
+      const tPit      = PIT_CONFIG.pitLaneLossSec + standing;
+      if (!(tPit > 0)) return null;
+
+      const offset   = tPit / refLap;                       // Fallback: Rundenanteil (uniform)
+      return { tPit, offset, refuelSec, tireSec, standing, liters, litersFromData, refLap };
+    }
+
+    // Stillstands-Erkennung (für die "virtuelle Weiterfahrt" im Boxenstand).
+    // Taktgeber ist die REPLAY-Uhr (SessionTime), nicht die Wanduhr → läuft im
+    // Replay synchron mit (pausiert/springt mit). Fallback: Wanduhr.
+    let _pitLastPct = null;
+    let _pitLastMoveSec = null;     // Zeitpunkt (Replay-Uhr) der letzten pct-Änderung
+    let _lastRefLap = null;         // letzte gültige Rundenzeit (Fahrerwechsel-stabil)
+    let _pitInPrev = false;         // in_pit im letzten Frame (Flankenerkennung)
+    let _pitEnterSec = null;        // Replay-Uhr-Zeitpunkt der Boxeneinfahrt
+    let _pitHasStopped = false;     // wurde in diesem Boxenbesuch schon gestanden?
+
+    function updatePit(meCar, refLap, strategy, cars, nowSec) {
+      const pit = meCar ? computePitGhost(meCar.pct, refLap, strategy) : null;
+      if (!pit) {
+        pitG.style.display = "none";
+        pitLabel.style.display = "none";
+        centerPit.style.display = "none";
+        // Timer NICHT zurücksetzen: beim Fahrerwechsel fällt 'me' kurz aus,
+        // sonst würde der Indikator zurückspringen.
+        return;
+      }
+      // Replay-synchrone Uhr; Fallback auf Wanduhr, falls SessionTime fehlt.
+      const clock = Number.isFinite(nowSec) ? nowSec : (Date.now() / 1000);
+
+      // Ghost-Position ZEIT-korrekt bestimmen: meine EstTime minus Zeitverlust,
+      // dann über die (pct,est)-Kurve des Feldes wieder auf eine Distanz-pct mappen.
+      // So warpt der Marker nicht mehr (Gerade/Kurve) und sitzt zwischen den Autos.
+      const samples = [];
+      for (const c of cars) {
+        if (c.in_pit) continue;                      // Pit-Autos verfälschen die Kurve
+        if (Number.isFinite(c.est) && c.est > 0 && Number.isFinite(c.pct)) {
+          samples.push({ pct: c.pct, est: c.est });
+        }
+      }
+      const myEst = (Number.isFinite(meCar.est) && meCar.est > 0)
+        ? meCar.est
+        : meCar.pct * pit.refLap;                    // Fallback: uniform
+
+      // Virtuelle Weiterfahrt: Stehst du in der Box, schmilzt der STANDZEIT-Anteil
+      // des Verlusts in Echtzeit ab → der Ghost wandert VORWÄRTS auf dich zu
+      // (nie rückwärts). Der Boxengassen-Verlust bleibt erhalten.
+      if (_pitLastPct === null || _pitLastMoveSec === null
+          || Math.abs(meCar.pct - _pitLastPct) > 5e-5) {
+        _pitLastPct = meCar.pct;
+        _pitLastMoveSec = clock;
+      }
+      // Sekunden stationär in Replay-Zeit (>=0; beim Zurückspulen geklemmt)
+      const stillFor = Math.max(clock - _pitLastMoveSec, 0);
+      const inPit = !!meCar.in_pit;
+
+      // Boxenbesuch-Flanken: Zeit seit Boxeneinfahrt bestimmen
+      if (inPit && !_pitInPrev) { _pitEnterSec = clock; _pitHasStopped = false; }
+      if (!inPit) { _pitEnterSec = null; _pitHasStopped = false; }
+      _pitInPrev = inPit;
+
+      const stationary = inPit && stillFor > 1.0;
+      if (stationary) _pitHasStopped = true;
+
+      // Restverlust: in der Box ab Einfahrt MONOTON herunterzählen → der Ghost
+      // läuft auf unseren Punkt zu und trifft ihn am Pit-Exit. Auf der Strecke:
+      // voller T_pit = "wo käme ich raus, wenn ich JETZT an die Box ginge".
+      let remainingLoss = pit.tPit;
+      if (inPit && _pitEnterSec !== null) {
+        remainingLoss = Math.max(pit.tPit - Math.max(clock - _pitEnterSec, 0), 0);
+      }
+      const remStanding = stationary ? Math.max(pit.standing - stillFor, 0) : pit.standing;
+
+      let ghostPct;
+      if (samples.length >= 2) {
+        ghostPct = estToPct(myEst - remainingLoss, samples, pit.refLap);
+      }
+      if (ghostPct == null) {                         // Fallback: rein distanzbasiert
+        ghostPct = ((meCar.pct - remainingLoss / pit.refLap) % 1 + 1) % 1;
+      }
+
+      const aMe    = meCar.pct * 2 * Math.PI;
+      // Bogenlänge = Distanz-Lücke vom Ghost bis zu mir (in Fahrtrichtung)
+      const arcOff = Math.min(((meCar.pct - ghostPct) % 1 + 1) % 1, 0.999);
+      const aGhost = aMe - arcOff * 2 * Math.PI;
+
+      // Verlust-Bogen entlang des Rings (vom Ghost bis zu mir, in Fahrtrichtung)
+      const s = xyFromAngle(aGhost, R);
+      const e = xyFromAngle(aMe, R);
+      const largeArc = arcOff > 0.5 ? 1 : 0;
+      pitArc.setAttribute("d", `M ${s.x} ${s.y} A ${R} ${R} 0 ${largeArc} 1 ${e.x} ${e.y}`);
+
+      // Ghost-Marker auf dem Ring
+      const g = xyFromAngle(ghostPct * 2 * Math.PI, R);
+      pitRing.setAttribute("cx", g.x); pitRing.setAttribute("cy", g.y);
+      pitCore.setAttribute("cx", g.x); pitCore.setAttribute("cy", g.y);
+
+      // Label nach außen + Leader
+      const labelR = R + LABEL_BASE + 2 * LANE_STEP;
+      const lp = xyFromAngle(ghostPct * 2 * Math.PI, labelR);
+      pitLead.setAttribute("x1", g.x); pitLead.setAttribute("y1", g.y);
+      pitLead.setAttribute("x2", lp.x); pitLead.setAttribute("y2", lp.y);
+      pitG.style.display = "";
+
+      // Headline: live verbleibender Zeitverlust (zählt im ganzen Boxenbesuch herunter)
+      const tShown = inPit ? remainingLoss : pit.tPit;
+      pitTimeEl.textContent = "−" + (tShown >= 100 ? Math.round(tShown) : tShown.toFixed(1)) + "s";
+
+      // Center-Label: PIT IN (Einfahrt) / BOX (steht) / PIT OUT (Ausfahrt)
+      if (inPit) {
+        let phase = "PIT IN", cls = "";
+        if (stationary)        { phase = "BOX";     cls = "box"; }
+        else if (_pitHasStopped){ phase = "PIT OUT"; cls = "out"; }
+        centerPit.textContent = phase;
+        centerPit.className = "center-pit " + cls;
+        centerPit.style.display = "";
+      } else {
+        centerPit.style.display = "none";
+      }
+
+      // Klein: Liter + Standzeit (Tanken ∥ Reifen). "~" = angenommen (keine Telemetrie)
+      const litTxt = (pit.liters > 0)
+        ? ((pit.litersFromData ? "" : "~") + Math.round(pit.liters) + " L")
+        : "kein Sprit";
+      let standTxt;
+      if (stationary) {
+        standTxt = remStanding > 0.5 ? ("steht noch " + Math.ceil(remStanding) + "s") : "fertig – raus!";
+      } else {
+        standTxt = "steht " + Math.round(pit.standing) + "s";
+      }
+      pitDetailEl.textContent = `${litTxt} · ${standTxt}`;
+
+      // Nächstes Auto an der (live wandernden) Ghost-Position
+      let near = null, bestD = 1;
+      for (const c of cars) {
+        if (c.me) continue;
+        const d = circDist(c.pct, ghostPct);
+        if (d < bestD) { bestD = d; near = c; }
+      }
+      pitNearEl.textContent = (near && bestD < 0.06 && near.car_number) ? ("≈ #" + near.car_number) : "";
+
+      pitLabel.style.display = "";
+      pitLabel.style.transform = `translate(${lp.x}px, ${lp.y}px) translate(-50%, -50%)`;
+    }
+
+    // ---- Kalibrier-Panel ----
+    function updateCalibration(cal) {
+      if (!cal || !cal.active) { calPanel.style.display = "none"; return; }
+      calPanel.style.display = "";
+      const fmt = { pit_loss: v => v.toFixed(1) + "s",
+                    fuel_rate: v => v.toFixed(2) + " L/s",
+                    tire_time: v => v.toFixed(1) + "s" };
+      for (const key of ["pit_loss", "fuel_rate", "tire_time"]) {
+        const el = calSteps[key];
+        const v = cal[key];
+        const done = Number.isFinite(v);
+        el.classList.toggle("done", done);
+        el.querySelector(".cal-val").textContent = done ? fmt[key](v) : "";
+      }
+      calEvent.textContent = cal.complete ? "✓ komplett & gespeichert" : (cal.event || "");
+    }
+
+    // ---- Hauptrender ----
+    function renderCircle(circle, strategy) {
+      circle = circle || {};
+      const cars = Array.isArray(circle.cars) ? circle.cars : [];
+
+      renderSectors(circle.sectors);
+      renderPitMarks(circle.pit_entry_pct, circle.pit_exit_pct);
+
+      // Zentrum-Text
+      const track = circle.track_name || "";
+      centerTrk.textContent = track;
+      centerSub.textContent = cars.length ? (cars.length + " Cars") : "warte auf iRacing";
+
+      // Nicht mehr vorhandene Autos entfernen
+      const present = new Set(cars.map(c => c.car_idx));
+      for (const idx of Array.from(dotGroups.keys())) {
+        if (!present.has(idx)) removeCar(idx);
+      }
+      if (!cars.length) { updatePit(null, null, null, [], circle.time); return; }
+
+      // Klassen -> Band (außen/innen)
+      const classIds = [...new Set(cars.map(c => c.car_class_id))].sort((a, b) => a - b);
+      const multiClass = classIds.length > 1;
+      const classBand = new Map();
+      classIds.forEach((cid, i) => classBand.set(cid, (i % 2 === 0) ? "out" : "in"));
+
+      // Auto-Objekte vorbereiten (Winkel, Band, Labelbreite)
+      const items = cars.map(c => {
+        const a = c.pct * 2 * Math.PI;
+        let band;
+        if (multiClass) {
+          band = classBand.get(c.car_class_id) || "out";
+        } else {
+          // Single-Class: nach Paritaet entzerren
+          band = (((c.pos || c.car_idx) % 2) === 0) ? "out" : "in";
+        }
+        return { c, angle: a, band, lane: 0, w: 0 };
+      });
+
+      // Labels befuellen + Breite messen
+      for (const it of items) {
+        const { lab } = ensureCar(it.c.car_idx);
+        const numEl = lab.querySelector(".num");
+        const posEl = lab.querySelector(".pos");
+        numEl.textContent = it.c.car_number ? ("#" + it.c.car_number) : "?";
+        posEl.textContent = it.c.pos ? ("P" + it.c.pos) : "";
+        lab.style.borderLeftColor = it.c.car_class_color || "#888";
+        lab.classList.toggle("me", !!it.c.me);
+        lab.classList.toggle("pit", !!it.c.in_pit);
+        it.w = lab.offsetWidth || 34;
+      }
+
+      // Lane-Zuweisung je Band (greedy nach Winkel)
+      assignLanes(items.filter(it => it.band === "out"), +1);
+      assignLanes(items.filter(it => it.band === "in"),  -1);
+
+      // Positionieren
+      for (const it of items) {
+        const { g, lab } = ensureCar(it.c.car_idx);
+        const dir = it.band === "out" ? +1 : -1;
+        const labelR = R + dir * (LABEL_BASE + it.lane * LANE_STEP);
+
+        // rotierende Gruppe (Punkt + Leader)
+        const deg = it.c.pct * 360;
+        g.setAttribute("transform", `translate(${CX} ${CY}) rotate(${deg})`);
+        g.classList.toggle("pit", !!it.c.in_pit);
+        const dot = g.querySelector(".car-dot");
+        dot.setAttribute("fill", it.c.car_class_color || "#888");
+        dot.classList.toggle("me", !!it.c.me);
+        const lead = g.querySelector(".car-lead");
+        // Leader laeuft von der Ringlinie nach aussen/innen zur Lane
+        lead.setAttribute("y1", -R);
+        lead.setAttribute("y2", -labelR);
+
+        // Pill (aufrecht) an Lane-Radius
+        const p = pointAt(it.c.pct, labelR);
+        lab.style.transform = `translate(${p.x}px, ${p.y}px) translate(-50%, -50%)`;
+      }
+
+      // Pit-Out-Indikator aktualisieren.
+      // Letzte gültige Rundenzeit halten (beim Fahrerwechsel fällt sie kurz aus → kein Sprung).
+      if (Number.isFinite(circle.ref_lap) && circle.ref_lap > 0.5) _lastRefLap = circle.ref_lap;
+      const refLapHeld = (Number.isFinite(circle.ref_lap) && circle.ref_lap > 0.5) ? circle.ref_lap : _lastRefLap;
+      const meCar = cars.find(c => c.me) || null;
+      updatePit(meCar, refLapHeld, strategy, cars, circle.time);
+    }
+
+    // Greedy-Lane-Zuweisung auf dem KREIS (ohne Naht bei 12 Uhr):
+    // Der Ring wird an der größten Winkellücke aufgeschnitten und die Autos
+    // ab dort fortlaufend (entrollt) verarbeitet. So kennt die Lane-Logik
+    // den Übergang 0.97 <-> 0.03 und stapelt dort sauber statt zu überlappen.
+    function assignLanes(list, dir) {
+      const n = list.length;
+      if (n === 0) return;
+      list.sort((a, b) => a.angle - b.angle);
+      if (n === 1) { list[0].lane = 0; return; }
+
+      const TWO_PI = 2 * Math.PI;
+
+      // Größte Lücke zwischen aufeinanderfolgenden Autos finden (inkl. Naht)
+      let cutIdx = 0, maxGap = -1;
+      for (let i = 0; i < n; i++) {
+        const next = (i + 1) % n;
+        let gap = list[next].angle - list[i].angle;
+        if (next === 0) gap += TWO_PI;          // Naht überbrücken
+        if (gap > maxGap) { maxGap = gap; cutIdx = next; }
+      }
+
+      // Ab der größten Lücke entrollen: Winkel monoton steigend machen
+      const ordered = [];
+      for (let k = 0; k < n; k++) {
+        const it = list[(cutIdx + k) % n];
+        let a = it.angle;
+        if (a < list[cutIdx].angle - 1e-9) a += TWO_PI;  // gewrappte Hälfte anheben
+        ordered.push({ it, a });
+      }
+
+      const baseR = R + LABEL_BASE;      // ~ erster Lane-Radius
+      const laneEnd = [];                // pro Lane: bis zu welchem (entrollten) Winkel belegt
+      for (const { it, a } of ordered) {
+        const halfA = ((it.w / 2) + LANE_GAP_PX) / baseR;  // halbe Winkelbreite
+        let placed = false;
+        for (let lane = 0; lane < MAX_LANES; lane++) {
+          if (laneEnd[lane] === undefined || laneEnd[lane] <= a - halfA) {
+            it.lane = lane;
+            laneEnd[lane] = a + halfA;
+            placed = true;
+            break;
+          }
+        }
+        if (!placed) {
+          let best = 0;
+          for (let lane = 1; lane < MAX_LANES; lane++) {
+            if (laneEnd[lane] < laneEnd[best]) best = lane;
+          }
+          it.lane = best;
+          laneEnd[best] = a + halfA;
+        }
+      }
+    }
+
+    // ---- WebSocket ----
+    const _wsHost = (location.hostname && location.hostname !== "localhost") ? location.hostname : "127.0.0.1";
+    const WS_URL  = `ws://${_wsHost}:8765`;
+    let socket = null, reconnectTimer = null;
+
+    function handleMessage(data) {
+      try {
+        const payload = JSON.parse(data);
+        if (window.__applyCardBgAlpha) window.__applyCardBgAlpha(payload.card_bg_alpha);
+        applyPitConfig(payload.pit_config);
+        renderCircle(payload.circle, payload.strategy);
+        updateCalibration(payload.pit_cal);
+      } catch (e) { /* ignore */ }
+    }
+
+    function connect() {
+      if (socket && socket.readyState === WebSocket.OPEN) return;
+      try { socket = new WebSocket(WS_URL); } catch (e) { scheduleReconnect(); return; }
+      socket.onopen    = () => {};
+      socket.onmessage = (e) => handleMessage(e.data);
+      socket.onclose   = () => scheduleReconnect();
+      socket.onerror   = () => {};
+    }
+
+    function scheduleReconnect() {
+      if (reconnectTimer) return;
+      reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, 1500);
+    }
+
+    // ---- Resizer ----
+    if (resizer) {
+      resizer.addEventListener("mousedown", (e) => {
+        isResizing = true;
+        resizeStartX = e.clientX;
+        resizeStartScale = scale;
+        resizeBaseWidth = wrapper.getBoundingClientRect().width / scale;
+        document.addEventListener("mousemove", onResizeMove);
+        document.addEventListener("mouseup", stopResize);
+        e.preventDefault(); e.stopPropagation();
+      });
+    }
+    function onResizeMove(e) {
+      if (!isResizing || !resizeBaseWidth) return;
+      let s = Math.max(0.4, Math.min(3, resizeStartScale + (e.clientX - resizeStartX) / resizeBaseWidth));
+      scale = s;
+      wrapper.style.transform = `scale(${s})`;
+      persist.setScale(s);
+    }
+    function stopResize() {
+      if (!isResizing) return;
+      isResizing = false;
+      persist.saveScale(scale);
+      document.removeEventListener("mousemove", onResizeMove);
+      document.removeEventListener("mouseup", stopResize);
+    }
+
+    connect();
+  </script>
+</body>
+</html>

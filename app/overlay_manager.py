@@ -65,6 +65,13 @@ else:
 # -------------------------------------------------------------
 def _launch_telemetry_server():
     try:
+        # Replay-Modus: statt Live-Server eine Aufnahme abspielen (ENV gesetzt
+        # von der "iDash (Replay)"-Run-Config). GUI/Overlays bleiben identisch.
+        if os.environ.get("IDASH_REPLAY"):
+            import replay_server
+            print("Starte im REPLAY-Modus (kein iRacing nötig).")
+            replay_server.run_from_env()
+            return
         import telemetry_server
         telemetry_server.main()
     except Exception as e:
@@ -394,6 +401,7 @@ class OverlayManager(QWidget):
         self.standings_overlay = None
         self.wind_overlay = None
         self.strategy_overlay = None
+        self.circle_overlay = None
         self.comparer_window = None
 
         self.current_opacity = 0.9
@@ -429,6 +437,9 @@ class OverlayManager(QWidget):
         if vis.get("strategy"):
             self.btn_strategy.setChecked(True)
             self.toggle_strategy(True)
+        if vis.get("circle"):
+            self.btn_circle.setChecked(True)
+            self.toggle_circle(True)
 
     def _set_visible(self, key: str, value: bool):
         if "visible" not in self.layout_state:
@@ -575,7 +586,11 @@ class OverlayManager(QWidget):
 
         self.btn_strategy = self._make_overlay_btn("Strategy / Fuel")
         self.btn_strategy.clicked.connect(self.toggle_strategy)
-        grid.addWidget(self.btn_strategy, 2, 0, 1, 2)
+        grid.addWidget(self.btn_strategy, 2, 0)
+
+        self.btn_circle = self._make_overlay_btn("Circle of Doom")
+        self.btn_circle.clicked.connect(self.toggle_circle)
+        grid.addWidget(self.btn_circle, 2, 1)
 
         main_layout.addLayout(grid)
         main_layout.addSpacing(16)
@@ -631,6 +646,13 @@ class OverlayManager(QWidget):
         btn_comparer.setObjectName("ComparerBtn")
         btn_comparer.clicked.connect(self.open_comparer)
         main_layout.addWidget(btn_comparer)
+        main_layout.addSpacing(6)
+
+        self.btn_pit_cal = QPushButton("◉  Pit-Kalibrierung starten")
+        self.btn_pit_cal.setObjectName("OverlayBtn")
+        self.btn_pit_cal.setCheckable(True)
+        self.btn_pit_cal.clicked.connect(self.toggle_pit_calibration)
+        main_layout.addWidget(self.btn_pit_cal)
 
         main_layout.addStretch()
 
@@ -765,6 +787,27 @@ class OverlayManager(QWidget):
                 self.strategy_overlay.hide()
             self._set_visible("strategy", False)
 
+    def toggle_circle(self, checked: bool):
+        if checked:
+            if self.circle_overlay is None:
+                self.circle_overlay = OverlayWindow("circle.html", "Circle of Doom")
+                self.circle_overlay.setWindowOpacity(1.0)
+                self.circle_overlay.set_content_opacity(self.current_opacity)
+                self.circle_overlay.resize(580, 580)
+                self.circle_overlay.move(900, 160)
+                self._restore_geometry(self.circle_overlay, "circle")
+                self.circle_overlay._on_drag_end = lambda w: self._store_geometry(w, "circle")
+                self.circle_overlay.show()
+                self.circle_overlay.set_edit_mode(self.chk_edit.isChecked())
+            else:
+                self.circle_overlay.show()
+            self._set_visible("circle", True)
+        else:
+            if self.circle_overlay:
+                self._store_geometry(self.circle_overlay, "circle")
+                self.circle_overlay.hide()
+            self._set_visible("circle", False)
+
     def open_comparer(self):
         if self.comparer_window is None:
             from PyQt5.QtCore import QUrl
@@ -777,7 +820,12 @@ class OverlayManager(QWidget):
             layout.setContentsMargins(0, 0, 0, 0)
 
             view = QWebEngineView()
-            view.load(QUrl("http://localhost:8080/comparer.html"))
+            try:
+                import telemetry_server
+                http_port = telemetry_server.HTTP_PORT
+            except Exception:
+                http_port = 8080
+            view.load(QUrl(f"http://localhost:{http_port}/comparer.html"))
             layout.addWidget(view)
 
             self.comparer_window = win
@@ -785,6 +833,28 @@ class OverlayManager(QWidget):
         self.comparer_window.show()
         self.comparer_window.raise_()
         self.comparer_window.activateWindow()
+
+    # ------------ Pit-Kalibrierung ------------
+
+    def _send_pit_cmd(self, action: str):
+        """Schreibt ein Kalibrier-Kommando in overlay_layout.json; der
+        Telemetry-Server pollt es und steuert die State-Machine."""
+        nonce = int(self.layout_state.get("_pit_cmd_nonce", 0)) + 1
+        self.layout_state["_pit_cmd_nonce"] = nonce
+        self.layout_state["pit_cal_cmd"] = {"action": action, "nonce": nonce}
+        self._save_layout_state()
+
+    def toggle_pit_calibration(self, checked: bool):
+        if checked:
+            self._send_pit_cmd("start")
+            self.btn_pit_cal.setText("◉  Kalibrierung läuft – stoppen")
+            # Circle-Overlay einblenden, damit die Schritt-Führung sichtbar ist
+            if not self.btn_circle.isChecked():
+                self.btn_circle.setChecked(True)
+                self.toggle_circle(True)
+        else:
+            self._send_pit_cmd("stop")
+            self.btn_pit_cal.setText("◉  Pit-Kalibrierung starten")
 
     def on_edit_mode_changed(self, state: int):
         enabled = state == Qt.Checked
@@ -794,6 +864,7 @@ class OverlayManager(QWidget):
             self.standings_overlay,
             self.wind_overlay,
             self.strategy_overlay,
+            self.circle_overlay,
         ):
             if win:
                 win.set_edit_mode(enabled)
@@ -810,6 +881,7 @@ class OverlayManager(QWidget):
             self.standings_overlay,
             self.wind_overlay,
             self.strategy_overlay,
+            self.circle_overlay,
         ):
             if win is not None:
                 win.set_content_opacity(opacity)
@@ -825,6 +897,8 @@ class OverlayManager(QWidget):
             self._store_geometry(self.wind_overlay, "wind")
         if self.strategy_overlay:
             self._store_geometry(self.strategy_overlay, "strategy")
+        if self.circle_overlay:
+            self._store_geometry(self.circle_overlay, "circle")
         super().closeEvent(event)
 
 

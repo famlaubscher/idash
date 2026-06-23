@@ -11,5 +11,18 @@
     "y": 1200,
     "w": 500,
     "h": 200
+  },
+  "server": {
+    "http_port": 6912
+  },
+  "pit": {
+    "enabled": true,
+    "fuel_rate_lps": 2.84,
+    "tire_change_sec": 18.0,
+    "change_tires": true,
+    "pit_lane_loss_sec": 20.0,
+    "manual_refuel_l": null,
+    "refuel_fallback_l": 105.0,
+    "ref_lap_fallback_sec": 100.0
   }
 }
