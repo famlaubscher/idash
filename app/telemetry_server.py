@@ -22,14 +22,21 @@ from relative_builder import RelativeBuilder
 from session_builder import SessionInfoBuilder
 from standings_builder import StandingsBuilder
 from env_builder import WindBuilder, EnvBuilder
+from circle_builder import CircleBuilder
+from pit_calibrator import PitCalibrator
 UPDATE_INTERVAL = 0.016  # ~60 Hz
 
 # Pfad zur Layout-Datei (gleiche Logik wie overlay_manager.py)
 if hasattr(sys, "_MEIPASS"):
     _CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".idash_overlay")
     LAYOUT_PATH = os.path.join(_CONFIG_DIR, "overlay_layout.json")
+    CONFIG_PATH = os.path.join(_CONFIG_DIR, "overlay_config.json")
 else:
     LAYOUT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "overlay_layout.json")
+    # overlay_config.json liegt im Projekt-Root (eine Ebene über app/)
+    CONFIG_PATH = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "overlay_config.json"
+    )
 
 
 def _read_opacity() -> float:
@@ -41,8 +48,104 @@ def _read_opacity() -> float:
         return max(0.0, min(v, 1.0))
     except Exception:
         return 0.9
+
+
+# Default-Annahmen für den Pit-Out-Indikator (Circle of Doom).
+# Werden aus overlay_config.json["pit"] überschrieben (snake_case-Keys).
+_PIT_DEFAULTS = {
+    "enabled":          True,
+    "fuelRateLps":      2.84,   # Betankung: Liter pro Sekunde (108 L in 38 s)
+    "tireChangeSec":    18.0,   # Dauer kompletter Reifenwechsel (alle 4)
+    "changeTires":      True,   # Reifen wechseln?
+    "pitLaneLossSec":   20.0,   # Zeitverlust Boxengasse ggü. Strecke (Durchfahrt)
+    "manualRefuelL":    None,   # feste Tankmenge (überschreibt IMMER, auch live)
+    "refuelFallbackL":  None,   # Tankmenge, wenn keine Fuel-Telemetrie da ist (z.B. Replay)
+    "refLapFallbackSec": 100.0, # Ersatz-Rundenzeit, solange keine echte vorliegt
+}
+
+# JSON-Key (snake_case)  ->  (Payload-Key, Caster)
+_PIT_FIELDS = {
+    "enabled":              ("enabled",          bool),
+    "fuel_rate_lps":        ("fuelRateLps",      float),
+    "tire_change_sec":      ("tireChangeSec",    float),
+    "change_tires":         ("changeTires",      bool),
+    "pit_lane_loss_sec":    ("pitLaneLossSec",   float),
+    "manual_refuel_l":      ("manualRefuelL",    float),
+    "refuel_fallback_l":    ("refuelFallbackL",  float),
+    "ref_lap_fallback_sec": ("refLapFallbackSec", float),
+}
+
+
+def _read_pit_cmd() -> dict | None:
+    """Liest ein Kalibrier-Kommando aus overlay_layout.json (vom Manager gesetzt).
+    Format: {"pit_cal_cmd": {"action": "start"|"stop"|"reset", "nonce": <int>}}"""
+    try:
+        with open(LAYOUT_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        cmd = data.get("pit_cal_cmd") if isinstance(data, dict) else None
+        if isinstance(cmd, dict) and "action" in cmd:
+            return cmd
+    except Exception:
+        pass
+    return None
+
+
+def _read_pit_config() -> dict:
+    """Liest den 'pit'-Abschnitt aus overlay_config.json und mischt ihn über
+    die Defaults. Robust gegen fehlende Datei / fehlerhafte Werte."""
+    cfg = dict(_PIT_DEFAULTS)
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        pit = data.get("pit") if isinstance(data, dict) else None
+        if isinstance(pit, dict):
+            for json_key, (out_key, caster) in _PIT_FIELDS.items():
+                if json_key not in pit:
+                    continue
+                val = pit[json_key]
+                if val is None:
+                    cfg[out_key] = None
+                    continue
+                try:
+                    cfg[out_key] = caster(val)
+                except (TypeError, ValueError):
+                    pass
+    except Exception:
+        pass
+    return cfg
 LOG_INTERVAL = 5.0      # Ausgabe im Terminal alle 5 Sekunden
-HTTP_PORT = 8080        # Port für OBS Browser Sources
+
+
+def _read_http_port(default: int = 8080) -> int:
+    """Ermittelt den HTTP-Port (OBS Browser Sources / Setup-Comparer).
+
+    Priorität: Umgebungsvariable IDASH_HTTP_PORT > overlay_config.json
+    ["server"]["http_port"] > Default 8080.
+    """
+    # 1) Env-Override
+    env = os.environ.get("IDASH_HTTP_PORT")
+    if env:
+        try:
+            p = int(env)
+            if 1 <= p <= 65535:
+                return p
+        except (TypeError, ValueError):
+            pass
+    # 2) overlay_config.json -> server.http_port
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        server = data.get("server") if isinstance(data, dict) else None
+        if isinstance(server, dict):
+            p = int(server.get("http_port"))
+            if 1 <= p <= 65535:
+                return p
+    except Exception:
+        pass
+    return default
+
+
+HTTP_PORT = _read_http_port()   # Port für OBS Browser Sources
 
 # Overlays-Verzeichnis (funktioniert im Dev-Modus und im PyInstaller-Build)
 if hasattr(sys, "_MEIPASS"):
@@ -143,17 +246,26 @@ def _start_http_server(port: int = HTTP_PORT) -> None:
     t.start()
     print(f"HTTP-Server gestartet: http://localhost:{port}/")
     print(f"  OBS Browser Sources:")
-    for name in ("hud", "relative", "strategy", "standings", "wind"):
+    for name in ("hud", "relative", "strategy", "standings", "wind", "circle"):
         print(f"    http://localhost:{port}/{name}.html")
 
 
 class TelemetryServer:
-    def __init__(self, host: str = "127.0.0.1", port: int = 8765):
+    def __init__(self, host: str = "127.0.0.1", port: int = 8765,
+                 ir=None, record_path: str | None = None):
         self.host = host
         self.port = port
 
-        # IRSDK-Client
-        self.ir = irsdk.IRSDK()
+        # IRSDK-Client – echt, injiziert (Replay) oder aufzeichnend gewrappt.
+        self.ir = ir if ir is not None else irsdk.IRSDK()
+
+        self._recorder = None
+        if record_path:
+            from replay_common import RecordingIRSDK, Recorder
+            self.ir = RecordingIRSDK(self.ir)
+            self._recorder = Recorder(record_path)
+            print(f"Aufzeichnung aktiv → {record_path}")
+
         self.clients: set = set()
 
         # Interne Zustände
@@ -164,6 +276,11 @@ class TelemetryServer:
         self._slow_tick: int = 0
         self._slow_cache: dict = {}  # gecachte Daten der schweren Builder
         self._cached_opacity: float = _read_opacity()
+        self._cached_pit_config: dict = _read_pit_config()
+
+        # Pit-Kalibrierung (geführtes Einlernen in Practice)
+        self._calibrator = PitCalibrator()
+        self._pit_cmd_nonce = None
 
         # Tyre-Cache über mehrere Ticks hinweg
         # dict[car_idx] -> Tyre-String (z.B. "Dry"/"Wet")
@@ -178,6 +295,7 @@ class TelemetryServer:
             "standings": StandingsBuilder(self.ir),
             "wind": WindBuilder(self.ir),
             "env": EnvBuilder(self.ir),
+            "circle": CircleBuilder(self.ir),
         }
 
     # ------------------------------------------------------------------
@@ -388,7 +506,13 @@ class TelemetryServer:
         # Opacity aus Layout-Datei in Payload (alle 5 Ticks aktualisiert)
         if self._slow_tick % 5 == 0:
             self._cached_opacity = _read_opacity()
+            self._cached_pit_config = _read_pit_config()
         payload["card_bg_alpha"] = self._cached_opacity
+
+        # Pit-Kalibrierung: Kommandos, Fütterung, gelernte Werte einmischen
+        pit_config, pit_cal = self._handle_calibration()
+        payload["pit_config"] = pit_config
+        payload["pit_cal"] = pit_cal
 
         # --- Car-Count Korrektur ---
         standings_list = payload.get("standings")
@@ -411,6 +535,78 @@ class TelemetryServer:
         return payload
 
     # ------------------------------------------------------------------
+    # Pit-Kalibrierung
+    # ------------------------------------------------------------------
+
+    def _player_scalar(self, key):
+        try:
+            return self.ir[key]
+        except Exception:
+            return None
+
+    def _handle_calibration(self):
+        """Verarbeitet Kalibrier-Kommandos, füttert die State-Machine und mischt
+        gelernte Werte über die Config-Defaults (gelernt gewinnt).
+        Liefert (pit_config_für_payload, pit_cal_status)."""
+        cal = self._calibrator
+
+        # Kommando (start/stop/reset) nur bei neuer Nonce anwenden
+        cmd = _read_pit_cmd()
+        if cmd is not None:
+            nonce = cmd.get("nonce")
+            if nonce != self._pit_cmd_nonce:
+                self._pit_cmd_nonce = nonce
+                action = cmd.get("action")
+                if action == "start":
+                    cal.start(PitCalibrator.make_key(self.ir))
+                elif action == "stop":
+                    cal.stop()
+                elif action == "reset":
+                    cal.reset()
+
+        # Spieler-Kontext füttern (nur sinnvoll wenn verbunden)
+        if self.ir.is_connected:
+            time = self._player_scalar("SessionTime")
+            on_pit = self._player_scalar("OnPitRoad")
+            speed = self._player_scalar("Speed")
+            fuel = self._player_scalar("FuelLevel")
+            pct = self._player_scalar("LapDistPct")
+            ref_lap = None
+            for name in ("LapLastLapTime", "LapBestLapTime"):
+                v = self._player_scalar(name)
+                try:
+                    v = float(v)
+                except (TypeError, ValueError):
+                    continue
+                if v > 0.5:
+                    ref_lap = v
+                    break
+            try:
+                cal.feed(time=float(time) if time is not None else None,
+                         on_pit=on_pit,
+                         speed=float(speed) if speed is not None else None,
+                         fuel=float(fuel) if fuel is not None else None,
+                         pct=float(pct) if pct is not None else None,
+                         ref_lap=ref_lap)
+            except Exception:
+                logger.exception("Fehler in PitCalibrator.feed")
+
+        # pit_config = Defaults+Config, dann gelernte Werte (gewinnen) drüber
+        pit_config = dict(self._cached_pit_config)
+        try:
+            learned = cal.learned_for(PitCalibrator.make_key(self.ir)) if self.ir.is_connected else {}
+            for json_key, (out_key, caster) in _PIT_FIELDS.items():
+                if json_key in learned and learned[json_key] is not None:
+                    try:
+                        pit_config[out_key] = caster(learned[json_key])
+                    except (TypeError, ValueError):
+                        pass
+        except Exception:
+            logger.exception("Fehler beim Einmischen gelernter Pit-Werte")
+
+        return pit_config, cal.status()
+
+    # ------------------------------------------------------------------
     # Hauptloop
     # ------------------------------------------------------------------
 
@@ -428,6 +624,10 @@ class TelemetryServer:
 
                 # Snapshot des aktuellen Var-Buffers ziehen
                 self.ir.freeze_var_buffer_latest()
+
+                # Recorder: neuen Tick beginnen (vor jedem ir[...]-Zugriff)
+                if self._recorder is not None:
+                    self.ir.begin_tick()
 
                 # Session-Wechsel erkennen (z.B. Practice → Race, Rennen → Rennen)
                 try:
@@ -467,8 +667,14 @@ class TelemetryServer:
                     "track_temp": None,
                     "track_wetness": None,
                     "strategy": {},
+                    "circle": {"cars": [], "sectors": [], "track_name": None, "ref_lap": None,
+                               "time": None, "pit_entry_pct": None, "pit_exit_pct": None},
                     "seq": self._seq,
                 }
+
+            # Recorder: Tick mitschneiden (nur im verbundenen Zustand mit ir-Daten)
+            if self._recorder is not None and payload.get("connected"):
+                self._recorder.write(self._seq, self.ir.drain_tick(), payload)
 
             self._log_status(payload)
             await self.broadcast(payload)
@@ -526,10 +732,47 @@ class TelemetryServer:
             await self.telemetry_loop()
 
 
+def _default_record_path() -> str:
+    """dumps/recording_<ts>.jsonl (Ordner wird angelegt)."""
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    rec_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dumps")
+    os.makedirs(rec_dir, exist_ok=True)
+    return os.path.join(rec_dir, f"recording_{ts}.jsonl")
+
+
+def _resolve_record_path() -> str | None:
+    """Aufzeichnungspfad aus CLI (--record [pfad]) oder ENV IDASH_RECORD.
+
+    ENV-Werte: "1"/"true"/"yes" oder ein Verzeichnis → Auto-Timestamp-Name
+    (wie das nackte --record-Flag); sonst wörtlich als Dateipfad.
+    """
+    argv = sys.argv[1:]
+    if "--record" in argv:
+        i = argv.index("--record")
+        # optionaler Pfad direkt nach dem Flag
+        if i + 1 < len(argv) and not argv[i + 1].startswith("-"):
+            return argv[i + 1]
+        return _default_record_path()
+
+    env = os.environ.get("IDASH_RECORD")
+    if not env:
+        return None
+    if env.strip().lower() in ("1", "true", "yes", "on"):
+        return _default_record_path()
+    # Verzeichnis (vorhanden oder mit Pfadtrenner endend) → Timestamp-Datei darin
+    if os.path.isdir(env) or env.endswith(("/", "\\")):
+        os.makedirs(env, exist_ok=True)
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        return os.path.join(env, f"recording_{ts}.jsonl")
+    return env
+
+
 def main() -> None:
+    record_path = _resolve_record_path()
+    server = None
     try:
         _start_http_server(HTTP_PORT)
-        server = TelemetryServer()
+        server = TelemetryServer(record_path=record_path)
         asyncio.run(server.run())
     except KeyboardInterrupt:
         print("\nServer manuell gestoppt.")
@@ -537,6 +780,10 @@ def main() -> None:
         print("\nFATALER FEHLER IM TELEMETRY SERVER:")
         print(e)
         traceback.print_exc()
+    finally:
+        if server is not None and getattr(server, "_recorder", None) is not None:
+            server._recorder.close()
+            print(f"Aufzeichnung gespeichert: {server._recorder.path}")
 
 
 if __name__ == "__main__":
