@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>iDash Replay-Steuerung</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%;
+    background: #0b0d14;
+    color: #e5e7eb;
+    font-family: "Segoe UI", Arial, sans-serif;
+    font-size: 13px;
+    user-select: none;
+  }
+  .wrap { padding: 14px 16px 18px; max-width: 1100px; margin: 0 auto; }
+
+  .info {
+    display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap;
+    margin-bottom: 10px; font-variant-numeric: tabular-nums;
+  }
+  .info .big { font-size: 22px; font-weight: 800; color: #f9fafb; }
+  .info .lbl { color: #64748b; font-size: 10px; text-transform: uppercase; letter-spacing: .12em; }
+  .info .val { font-size: 16px; font-weight: 700; color: #e5e7eb; }
+  .badge {
+    padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 700;
+    background: rgba(255,255,255,.06); color: #94a3b8;
+  }
+  .badge.play { background: rgba(34,197,94,.18); color: #4ade80; }
+  .badge.pause{ background: rgba(251,191,36,.18); color: #fbbf24; }
+  .badge.pit  { background: rgba(232,72,50,.20); color: #fca5a5; }
+
+  /* Timeline */
+  .timeline {
+    position: relative; height: 34px; margin: 6px 0 16px;
+    background: #11151f; border: 1px solid rgba(255,255,255,.08);
+    border-radius: 8px; overflow: hidden; cursor: pointer;
+  }
+  .tl-fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0;
+    background: rgba(59,130,246,.22); border-right: 2px solid #3b82f6; }
+  .tl-pit  { position: absolute; top: 0; bottom: 0;
+    background: rgba(232,72,50,.40); }
+  .tl-lap  { position: absolute; top: 0; bottom: 0; width: 1px;
+    background: rgba(255,255,255,.18); }
+  .tl-lap span { position: absolute; top: 1px; left: 2px; font-size: 8px; color: #64748b; }
+  .tl-range {
+    position: absolute; inset: 0; width: 100%; height: 100%; margin: 0;
+    -webkit-appearance: none; appearance: none; background: transparent; cursor: pointer;
+  }
+  .tl-range::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 4px; height: 34px; background: #93c5fd;
+    border: none; border-radius: 2px; box-shadow: 0 0 4px rgba(0,0,0,.6);
+  }
+  .tl-range::-moz-range-thumb { width: 4px; height: 34px; background: #93c5fd; border: none; border-radius: 2px; }
+
+  .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .row + .row { margin-top: 10px; }
+
+  button {
+    background: rgba(255,255,255,.05); color: #cbd5e1;
+    border: 1px solid rgba(255,255,255,.10); border-radius: 8px;
+    min-width: 46px; height: 38px; padding: 0 12px;
+    font-size: 15px; font-weight: 700; cursor: pointer;
+  }
+  button:hover { background: rgba(255,255,255,.10); color: #fff; }
+  button:active { transform: translateY(1px); }
+  button.active { background: rgba(59,130,246,.25); border-color: rgba(59,130,246,.55); color: #bfdbfe; }
+  button.play.on { background: rgba(34,197,94,.22); border-color: rgba(34,197,94,.5); color: #86efac; }
+  .sep { width: 1px; height: 26px; background: rgba(255,255,255,.10); margin: 0 4px; }
+  .speeds { margin-left: auto; }
+  .speeds button { min-width: 40px; }
+  .conn { font-size: 11px; color: #64748b; margin-top: 12px; }
+  .conn.bad { color: #f87171; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="info">
+    <div><span class="big" id="t-cur">0:00</span>
+         <span class="lbl">/</span>
+         <span class="val" id="t-total">0:00</span></div>
+    <div><span class="lbl">Runde</span>
+         <span class="val"><span id="lap-cur">–</span>/<span id="lap-total">–</span></span></div>
+    <div><span class="lbl">Frame</span>
+         <span class="val"><span id="idx-cur">0</span>/<span id="idx-total">0</span></span></div>
+    <span class="badge" id="state-badge">–</span>
+    <span class="badge pit" id="pit-badge" style="display:none">PIT</span>
+  </div>
+
+  <div class="timeline" id="timeline">
+    <div class="tl-fill" id="tl-fill"></div>
+    <div id="tl-markers"></div>
+    <input class="tl-range" id="tl-range" type="range" min="0" max="1000" value="0" step="1">
+  </div>
+
+  <div class="row">
+    <button id="btn-start" title="Anfang">⏮</button>
+    <button id="btn-rev"   title="Rückwärts">⏪</button>
+    <button id="btn-play" class="play" title="Play/Pause">▶</button>
+    <button id="btn-fwd"   title="Vorwärts">⏩</button>
+    <button id="btn-end"   title="Ende">⏭</button>
+    <div class="sep"></div>
+    <button id="btn-stepb" title="1 Frame zurück">−1</button>
+    <button id="btn-stepf" title="1 Frame vor">+1</button>
+
+    <div class="row speeds" id="speeds">
+      <button data-spd="1">1×</button>
+      <button data-spd="2">2×</button>
+      <button data-spd="4">4×</button>
+      <button data-spd="8">8×</button>
+      <button data-spd="16">16×</button>
+    </div>
+  </div>
+
+  <div class="conn" id="conn">Verbinde…</div>
+</div>
+
+<script>
+  const _host = (location.hostname && location.hostname !== "localhost") ? location.hostname : "127.0.0.1";
+  const WS_URL = `ws://${_host}:8765`;
+  let socket = null, reconnectTimer = null;
+  let scrubbing = false;
+  let meta = null;
+  let last = null;
+
+  const $ = id => document.getElementById(id);
+
+  function fmt(sec) {
+    if (!Number.isFinite(sec) || sec < 0) sec = 0;
+    const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
+    return `${m}:${String(s).padStart(2, "0")}`;
+  }
+
+  function send(action, extra) {
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    socket.send(JSON.stringify({ replay_cmd: Object.assign({ action }, extra || {}) }));
+  }
+
+  // ---- Buttons ----
+  $("btn-start").onclick = () => send("start");
+  $("btn-end").onclick   = () => send("end");
+  $("btn-rev").onclick    = () => send("reverse");
+  $("btn-fwd").onclick    = () => send("forward");
+  $("btn-play").onclick   = () => send("toggle");
+  $("btn-stepb").onclick  = () => send("step", { delta: -1 });
+  $("btn-stepf").onclick  = () => send("step", { delta: 1 });
+  document.querySelectorAll("#speeds button").forEach(b => {
+    b.onclick = () => send("speed", { value: Number(b.dataset.spd) });
+  });
+
+  // ---- Timeline scrubbing ----
+  const range = $("tl-range");
+  range.addEventListener("pointerdown", () => { scrubbing = true; });
+  const stopScrub = () => { if (scrubbing) { scrubbing = false; send("seek", { frac: range.value / 1000 }); } };
+  range.addEventListener("pointerup", stopScrub);
+  range.addEventListener("pointercancel", stopScrub);
+  range.addEventListener("input", () => {
+    // Live mitsuchen, während gezogen wird
+    send("seek", { frac: range.value / 1000 });
+    if (meta && meta.t_total) $("t-cur").textContent = fmt((range.value / 1000) * meta.t_total);
+  });
+
+  // ---- Marker rendering ----
+  function renderMarkers() {
+    const host = $("tl-markers");
+    host.innerHTML = "";
+    if (!meta) return;
+    (meta.pit_marks || []).forEach(p => {
+      const d = document.createElement("div");
+      d.className = "tl-pit";
+      d.style.left = (p.frac0 * 100) + "%";
+      d.style.width = Math.max(0.4, (p.frac1 - p.frac0) * 100) + "%";
+      d.title = "Pit (In-/Out-Lap)";
+      host.appendChild(d);
+    });
+    (meta.lap_marks || []).forEach(m => {
+      const d = document.createElement("div");
+      d.className = "tl-lap";
+      d.style.left = (m.frac * 100) + "%";
+      const s = document.createElement("span");
+      s.textContent = m.lap;
+      d.appendChild(s);
+      host.appendChild(d);
+    });
+  }
+
+  // ---- Status update ----
+  function applyStatus(r) {
+    last = r;
+    $("t-total").textContent = fmt(r.t_total);
+    $("lap-cur").textContent = r.lap;
+    $("lap-total").textContent = r.lap_total;
+    $("idx-cur").textContent = r.idx;
+    $("idx-total").textContent = (r.total - 1);
+    if (!scrubbing) {
+      $("t-cur").textContent = fmt(r.t_cur);
+      range.value = Math.round((r.frac || 0) * 1000);
+      $("tl-fill").style.width = ((r.frac || 0) * 100) + "%";
+    }
+    // Play/Pause + Richtung
+    const playBtn = $("btn-play");
+    playBtn.textContent = r.playing ? "⏸" : "▶";
+    playBtn.classList.toggle("on", r.playing);
+    const badge = $("state-badge");
+    if (r.playing) {
+      badge.textContent = (r.dir < 0 ? "◀ " : "▶ ") + r.speed + "×";
+      badge.className = "badge play";
+    } else {
+      badge.textContent = "Pause";
+      badge.className = "badge pause";
+    }
+    $("btn-rev").classList.toggle("active", r.playing && r.dir < 0);
+    $("btn-fwd").classList.toggle("active", r.playing && r.dir > 0);
+    document.querySelectorAll("#speeds button").forEach(b => {
+      b.classList.toggle("active", Number(b.dataset.spd) === r.speed);
+    });
+    $("pit-badge").style.display = r.on_pit ? "" : "none";
+  }
+
+  function handle(data) {
+    let msg;
+    try { msg = JSON.parse(data); } catch (e) { return; }
+    if (msg.replay_meta) { meta = msg.replay_meta; renderMarkers(); }
+    if (msg.replay) applyStatus(msg.replay);
+  }
+
+  function connect() {
+    if (socket && socket.readyState === WebSocket.OPEN) return;
+    try { socket = new WebSocket(WS_URL); } catch (e) { scheduleReconnect(); return; }
+    socket.onopen = () => { $("conn").textContent = "Verbunden · " + WS_URL; $("conn").className = "conn"; };
+    socket.onmessage = (e) => handle(e.data);
+    socket.onclose = () => { $("conn").textContent = "Getrennt – Reconnect…"; $("conn").className = "conn bad"; scheduleReconnect(); };
+    socket.onerror = () => {};
+  }
+  function scheduleReconnect() {
+    if (reconnectTimer) return;
+    reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, 1200);
+  }
+
+  // Keyboard: Space=Play/Pause, Pfeile=Step/Seek
+  document.addEventListener("keydown", (e) => {
+    if (e.code === "Space") { e.preventDefault(); send("toggle"); }
+    else if (e.code === "ArrowLeft")  send("step", { delta: -1 });
+    else if (e.code === "ArrowRight") send("step", { delta: 1 });
+    else if (e.code === "Home") send("start");
+    else if (e.code === "End")  send("end");
+  });
+
+  connect();
+</script>
+</body>
+</html>

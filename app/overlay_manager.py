@@ -744,6 +744,7 @@ class OverlayManager(QWidget):
         self.strategy_overlay = None
         self.circle_overlay = None
         self.comparer_window = None
+        self.replay_control_window = None
 
         self._config_windows: dict = {}
 
@@ -760,6 +761,11 @@ class OverlayManager(QWidget):
 
         from PyQt5.QtCore import QTimer
         QTimer.singleShot(300, self._restore_visible_overlays)
+
+        # Im Replay-Modus die Steuerleiste automatisch öffnen (Buttons, Timeline,
+        # Session-Zeit/Runde). Etwas verzögert, damit der HTTP-Server steht.
+        if os.environ.get("IDASH_REPLAY"):
+            QTimer.singleShot(1200, self.open_replay_control)
 
     # ------------------------------------------------------------------
     # Overlay-Config-Fenster öffnen / Spalten pushen
@@ -1288,6 +1294,34 @@ class OverlayManager(QWidget):
         self.comparer_window.show()
         self.comparer_window.raise_()
         self.comparer_window.activateWindow()
+
+    def open_replay_control(self):
+        """Steuerleiste für den Replay (Buttons, Timeline, Zeit/Runde)."""
+        if self.replay_control_window is None:
+            from PyQt5.QtCore import QUrl
+            from PyQt5.QtWebEngineWidgets import QWebEngineView
+
+            win = QWidget()
+            win.setWindowTitle("iDash Replay-Steuerung")
+            win.resize(1100, 240)
+            win.setWindowIcon(QIcon(LOGO_PATH))
+            layout = QVBoxLayout(win)
+            layout.setContentsMargins(0, 0, 0, 0)
+
+            view = QWebEngineView()
+            try:
+                import telemetry_server
+                http_port = telemetry_server.HTTP_PORT
+            except Exception:
+                http_port = 8080
+            view.load(QUrl(f"http://localhost:{http_port}/replay_control.html"))
+            layout.addWidget(view)
+
+            self.replay_control_window = win
+
+        self.replay_control_window.show()
+        self.replay_control_window.raise_()
+        self.replay_control_window.activateWindow()
 
     # ------------------------------------------------------------------
     # Pit-Kalibrierung

@@ -75,6 +75,21 @@ Aufnahme (ändert sich beim Abspielen nicht weiter). Für Overlay- und
 Builder-Tests reicht das praktisch immer; echte Session-Wechsel
 (Practice→Race) separat aufzeichnen.
 
+**Replay-Steuerung (wie ein Videoplayer):** Der Replay ist index-getrieben
+(`ControllableReplayServer`) und nimmt Steuerbefehle über denselben WebSocket
+entgegen — JSON `{"replay_cmd": {"action": …}}`: `play`/`pause`/`toggle`,
+`forward`/`reverse`, `speed` (1/2/4/8/16×), `start`/`end`, `seek`
+(`index`|`frac`), `step` (`delta`). Pro Frame wird ein `replay`-Statusblock
+(idx, t_cur/t_total, lap/lap_total, on_pit, playing, speed, dir) mitgesendet;
+beim Verbinden bekommt der Client einmalig `replay_meta` (Gesamtzeit,
+Runden-Marken, Pit-Segmente für Inlap/Outlap). Runde wird aus `LapDistPct`-Wraps
+abgeleitet, Inlap/Outlap aus `OnPitRoad` (kein `Lap`-Feld in der Aufnahme).
+Die Steuer-UI ist `overlays/replay_control.html` (Buttons, Scrubber mit
+Marken, Zeit/Runde); der Manager öffnet sie im Replay-Modus (`IDASH_REPLAY`)
+automatisch als eigenes Fenster (`open_replay_control`). Seek/Reverse sind im
+`payload`-Modus exakt; im `irsdk`-Modus laufen die Builder beim Springen
+ggf. mit unstetigem Zustand (Best-Effort).
+
 ## Pit-Kalibrierung (Circle of Doom)
 
 `app/pit_calibrator.py` ist eine State-Machine, die pro Slow-Tick mit dem
