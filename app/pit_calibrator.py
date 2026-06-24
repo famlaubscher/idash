@@ -273,11 +273,15 @@ class PitCalibrator:
         if self._entry_time is None:
             return
 
-        # Deterministische Boxen-Ein-/Ausfahrt-Marken bei JEDEM Besuch festhalten
-        # (ersetzen die All-Cars-Heuristik im circle_builder).
+        # Deterministische Boxen-Ein-/Ausfahrt-Marken festhalten — aber NUR bei
+        # einer echten Boxengassen-Durchquerung. OnPitRoad flackert an der
+        # Einfahrt gern (kurze Schein-Besuche, Ein- ~ Ausfahrt am selben pct);
+        # solche Flacker-Besuche würden sonst die korrekten Marken überschreiben.
         if self._entry_pct is not None:
-            self._pit_entry_pct = round(self._entry_pct % 1.0, 5)
-        self._pit_exit_pct = round(exit_pct % 1.0, 5)
+            span = ((exit_pct - self._entry_pct) % 1 + 1) % 1
+            if 0.005 < span < 0.5:
+                self._pit_entry_pct = round(self._entry_pct % 1.0, 5)
+                self._pit_exit_pct = round(exit_pct % 1.0, 5)
 
         if not self._was_stationary:
             # --- Boxen-DURCHFAHRT (Auto stand NIE) -> Pit-Lane-Verlust ---

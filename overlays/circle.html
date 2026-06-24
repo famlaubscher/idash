@@ -381,14 +381,26 @@
       if (Number.isFinite(PIT_CONFIG.tiresSelected) || Number.isFinite(PIT_CONFIG.fuelAmount)) {
         const tires = Number.isFinite(PIT_CONFIG.tiresSelected) ? PIT_CONFIG.tiresSelected : 0;
         const tSel  = Number.isFinite(tire4) ? tire4 * tires / 4 : 0;
-        // Tankmenge: Blackbox-Auswahl -> Strategie -> 0
-        let liters = (PIT_CONFIG.fuelSelected && Number.isFinite(PIT_CONFIG.fuelAmount))
-          ? PIT_CONFIG.fuelAmount
-          : (strategy && Number.isFinite(strategy.refuel_next_stop) ? strategy.refuel_next_stop : 0);
-        if (!(liters > 0)) liters = 0;
+        // Tankmenge nach Blackbox-Auswahl:
+        //   fuelSelected === false -> es wird NICHT getankt (0)
+        //   fuelSelected === true  -> gewählte Menge (PitSvFuel), sonst Strategie
+        //   unbekannt (null)       -> Strategie-Schätzung
+        const stratL = (strategy && Number.isFinite(strategy.refuel_next_stop))
+          ? strategy.refuel_next_stop : null;
+        let liters, fuelTxt;
+        if (PIT_CONFIG.fuelSelected === false) {
+          liters = 0;
+          fuelTxt = " · kein Sprit";
+        } else if (PIT_CONFIG.fuelSelected === true) {
+          liters = Number.isFinite(PIT_CONFIG.fuelAmount) ? PIT_CONFIG.fuelAmount
+                 : (Number.isFinite(stratL) ? stratL : 0);
+          fuelTxt = liters > 0 ? ` · ${liters.toFixed(0)} L` : " · Sprit";
+        } else {
+          liters = Number.isFinite(stratL) ? stratL : 0;
+          fuelTxt = liters > 0 ? ` · ~${liters.toFixed(0)} L` : " · kein Sprit";
+        }
         const rSel  = rate > 0 ? liters / rate : 0;
         const tStop = loss + Math.max(tSel, rSel);
-        const fuelTxt = liters > 0 ? ` · ${liters.toFixed(0)} L` : " · kein Sprit";
         html += `<br><span class="cl-lbl">Gewählt</span> <span class="cl-val">${tires} Reifen${fuelTxt}</span>`
               + ` <span class="cl-lbl">→</span> <span class="cl-val">${fmt(tStop)}</span>`;
       } else {
