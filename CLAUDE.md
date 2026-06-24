@@ -132,6 +132,16 @@ Im Pit-Zeitmodell ergibt sich die Standzeit für n Reifen als
 `circle.html` zeigt sie als „Gewählt: n Reifen · X L → Stoppzeit" (bzw.
 „Blackbox n/a", wenn die Felder nicht lesbar sind — dient als Diagnose).
 
+**Service-Modus (sequenziell vs parallel):** Manche Serien wickeln Tanken und
+Reifen NACHEINANDER ab (Standzeit = `refuel + tire`) statt gleichzeitig
+(`max(refuel, tire)`). Das Flag `service_sequential` steuert das Modell; es wird
+beim ersten KOMBINIERTEN Stopp (Sprit + Reifen) automatisch erkannt
+(`_detect_sequential`: echtes `PitstopActive`-Fenster ≈ sum → sequenziell, ≈ max
+→ parallel; setzt vorher gemessene `fuel_rate` + `tire_change_sec` voraus) und in
+`pit_cache.json` persistiert. Hinweis: `tire_change_sec`/`fuel_rate` sind pro
+Fahrzeug, `service_sequential` pro Serie, die Strecken-Werte (`pit_lane_loss_sec`,
+Pit-Marken) pro Strecke stabil.
+
 **Pit-Marken deterministisch:** Bei jedem Besuch werden die exakten
 Boxen-Ein-/Ausfahrt-Positionen (`pit_entry_pct`/`pit_exit_pct`, LapDistPct)
 festgehalten, in `pit_cache.json` gespeichert und vom Server in den

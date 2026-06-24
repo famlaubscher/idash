@@ -130,6 +130,25 @@ def test_passive_marks():
     print("test_passive_marks: ALLE ASSERTS OK")
 
 
+def test_service_sequential():
+    """Erkennung sequenziell (sum) vs parallel (max) aus einem kombinierten
+    Stopp: Service-Fenster gegen refuel+tire bzw. max(refuel,tire)."""
+    c = PitCalibrator()
+    c._save_partial = lambda k: None
+    c.active = True
+    c._key = "K"
+    c.fuel_rate = 2.5      # L/s
+    c.tire_time = 18.0     # 4 Reifen
+    # 60 L -> refuel 24 s, tire 18 s ; seq=42, par=24
+    c._detect_sequential(svc_dur=42.0, fuel_delta=60.0, rate=2.5, tire_count=4)
+    assert c.service_sequential is True, c.service_sequential
+    c.service_sequential = None
+    c._detect_sequential(svc_dur=24.0, fuel_delta=60.0, rate=2.5, tire_count=4)
+    assert c.service_sequential is False, c.service_sequential
+    print("test_service_sequential: ALLE ASSERTS OK")
+
+
 if __name__ == "__main__":
     main()
     test_passive_marks()
+    test_service_sequential()

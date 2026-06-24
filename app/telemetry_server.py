@@ -57,6 +57,7 @@ _PIT_DEFAULTS = {
     "fuelRateLps":      2.84,   # Betankung: Liter pro Sekunde (108 L in 38 s)
     "tireChangeSec":    18.0,   # Dauer kompletter Reifenwechsel (alle 4)
     "changeTires":      True,   # Reifen wechseln?
+    "serviceSequential": False, # Tanken+Reifen nacheinander (sum) statt parallel (max)
     "pitLaneLossSec":   20.0,   # Zeitverlust Boxengasse ggü. Strecke (Durchfahrt)
     "manualRefuelL":    None,   # feste Tankmenge (überschreibt IMMER, auch live)
     "refuelFallbackL":  None,   # Tankmenge, wenn keine Fuel-Telemetrie da ist (z.B. Replay)
@@ -69,6 +70,7 @@ _PIT_FIELDS = {
     "fuel_rate_lps":        ("fuelRateLps",      float),
     "tire_change_sec":      ("tireChangeSec",    float),
     "change_tires":         ("changeTires",      bool),
+    "service_sequential":   ("serviceSequential", bool),
     "pit_lane_loss_sec":    ("pitLaneLossSec",   float),
     "manual_refuel_l":      ("manualRefuelL",    float),
     "refuel_fallback_l":    ("refuelFallbackL",  float),

@@ -61,6 +61,11 @@ class PitCalibrator:
         self.pit_loss = None     # s
         self.fuel_rate = None    # L/s
         self.tire_time = None    # s
+        # Service-Modus (Serie-Regel): True = Tanken+Reifen NACHEINANDER (sum),
+        # False = gleichzeitig (max), None = noch nicht erkannt. Wird bei einem
+        # KOMBINIERTEN Stopp (Sprit + Reifen) aus dem echten Service-Fenster
+        # gegen sum/max abgeleitet.
+        self.service_sequential = None
 
         # Pro-Boxenbesuch-Tracking
         self._prev_on_pit = False
@@ -119,6 +124,7 @@ class PitCalibrator:
         self.pit_loss = None
         self.fuel_rate = None
         self.tire_time = None
+        self.service_sequential = None
         self._armed = False
         self._ref_lap = None
         self._best_clean_lap = None
@@ -141,6 +147,7 @@ class PitCalibrator:
 
     def reset(self):
         self.pit_loss = self.fuel_rate = self.tire_time = None
+        self.service_sequential = None
         self._armed = False
         self._best_clean_lap = None
         self._lap_had_pit = True
@@ -331,6 +338,9 @@ class PitCalibrator:
                     self.fuel_rate = round(rate, 3)
                     extra = " (+Reifen, Reifenzeit separat ohne Tanken messen)" if tire_count > 0 else ""
                     self._last_event = f"Tankrate gemessen: {self.fuel_rate:.2f} L/s{extra}"
+                    # KOMBINIERTER Stopp (Sprit + Reifen): Service-Modus erkennen.
+                    if tire_count > 0 and self.tire_time:
+                        self._detect_sequential(svc_dur, fuel_delta, rate, tire_count)
                 else:
                     self._last_event = "Tankrate unplausibel — bitte wiederholen"
             elif tire_count > 0:
@@ -365,6 +375,29 @@ class PitCalibrator:
         loss = transit - span * self._best_clean_lap
         if 0.0 < loss < 120.0:
             self.pit_loss = round(loss, 2)
+
+    def _detect_sequential(self, svc_dur, fuel_delta, rate, tire_count):
+        """Erkennt aus einem KOMBINIERTEN Stopp (Sprit + Reifen), ob die Serie
+        Service sequenziell (sum) oder parallel (max) abwickelt: vergleicht das
+        echte Service-Fenster mit refuel+tire bzw. max(refuel,tire).
+        Voraussetzung: fuel_rate (aus diesem Stopp) und tire_time (aus einem
+        vorherigen Reifen-only-Stopp) liegen vor."""
+        if not rate or not self.tire_time:
+            return
+        refuel_t = fuel_delta / rate
+        tire_t = self.tire_time * tire_count / 4.0
+        if refuel_t < 1.0 or tire_t < 1.0 or svc_dur < 1.0:
+            return
+        seq = refuel_t + tire_t
+        par = max(refuel_t, tire_t)
+        if abs(seq - par) < 1.0:
+            return  # zu nah beieinander -> nicht unterscheidbar
+        self.service_sequential = abs(svc_dur - seq) < abs(svc_dur - par)
+        mode = "sequenziell" if self.service_sequential else "parallel"
+        self._last_event = (f"Service-Modus: {mode} "
+                            f"(Stopp {svc_dur:.0f}s ≈ {seq:.0f}/{par:.0f}s)")
+        if self.active and self._key:
+            self._save_partial(self._key)
 
     def _maybe_complete(self):
         if self.active and self._key and self.is_complete():
@@ -408,6 +441,7 @@ class PitCalibrator:
             "pit_loss": self.pit_loss,
             "fuel_rate": self.fuel_rate,
             "tire_time": self.tire_time,           # auf 4 Reifen normiert
+            "service_sequential": self.service_sequential,
             "tires_last": self._tires_last,        # Reifenanzahl des letzten Stopps
             "pit_entry_pct": self._pit_entry_pct,
             "pit_exit_pct":  self._pit_exit_pct,
@@ -442,6 +476,8 @@ class PitCalibrator:
             entry["fuel_rate_lps"] = self.fuel_rate
         if self.tire_time is not None:
             entry["tire_change_sec"] = self.tire_time
+        if self.service_sequential is not None:
+            entry["service_sequential"] = bool(self.service_sequential)
         if self._pit_entry_pct is not None:
             entry["pit_entry_pct"] = self._pit_entry_pct
         if self._pit_exit_pct is not None:

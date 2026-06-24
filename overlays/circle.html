@@ -325,6 +325,7 @@
       fuelRateLps:     2.84,   // Betankung: Liter pro Sekunde (108 L in 38 s)
       tireChangeSec:   18.0,   // Dauer kompletter Reifenwechsel (alle 4)
       changeTires:     true,   // Reifen wechseln? (false = nur tanken)
+      serviceSequential: false, // true = Tanken+Reifen nacheinander (sum), false = gleichzeitig (max)
       pitLaneLossSec:  20.0,   // Zeitverlust durch Boxengasse (Durchfahrt) ggü. Strecke
       manualRefuelL:   null,   // feste Tankmenge in L (überschreibt IMMER, auch live)
       refuelFallbackL: null,   // Tankmenge, wenn keine Fuel-Telemetrie da ist (z.B. Replay)
@@ -372,7 +373,8 @@
       let html = `<span class="cl-lbl">Drive-Thru</span> <span class="cl-val">${fmt(loss)}</span>`;
       if (Number.isFinite(tank) && tank > 0 && rate > 0) {
         const refuelFull = tank / rate;
-        const standing   = Math.max(refuelFull, Number.isFinite(tire4) ? tire4 : 0);
+        const t4 = Number.isFinite(tire4) ? tire4 : 0;
+        const standing   = PIT_CONFIG.serviceSequential ? (refuelFull + t4) : Math.max(refuelFull, t4);
         html += `<br><span class="cl-lbl">Stop voll</span> <span class="cl-val">${fmt(loss + standing)}</span>`;
       }
 
@@ -400,7 +402,7 @@
           fuelTxt = liters > 0 ? ` · ~${liters.toFixed(0)} L` : " · kein Sprit";
         }
         const rSel  = rate > 0 ? liters / rate : 0;
-        const tStop = loss + Math.max(tSel, rSel);
+        const tStop = loss + (PIT_CONFIG.serviceSequential ? (tSel + rSel) : Math.max(tSel, rSel));
         html += `<br><span class="cl-lbl">Gewählt</span> <span class="cl-val">${tires} Reifen${fuelTxt}</span>`
               + ` <span class="cl-lbl">→</span> <span class="cl-val">${fmt(tStop)}</span>`;
       } else {
@@ -624,7 +626,11 @@
         ? PIT_CONFIG.tiresSelected
         : (PIT_CONFIG.changeTires ? 4 : 0);
       const tireSec   = PIT_CONFIG.tireChangeSec * tireCount / 4;
-      const standing  = Math.max(refuelSec, tireSec);        // Standzeit (Tanken ∥ Reifen)
+      // Standzeit: serviceSequential -> Tanken + Reifen NACHEINANDER (sum),
+      // sonst gleichzeitig (max).
+      const standing  = PIT_CONFIG.serviceSequential
+        ? (refuelSec + tireSec)
+        : Math.max(refuelSec, tireSec);
       const tPit      = PIT_CONFIG.pitLaneLossSec + standing;
       if (!(tPit > 0)) return null;
 
