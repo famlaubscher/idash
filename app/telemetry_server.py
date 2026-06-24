@@ -73,6 +73,9 @@ _PIT_FIELDS = {
     "manual_refuel_l":      ("manualRefuelL",    float),
     "refuel_fallback_l":    ("refuelFallbackL",  float),
     "ref_lap_fallback_sec": ("refLapFallbackSec", float),
+    # Deterministische Pit-Marken aus der Kalibrierung (sonst Builder-Heuristik)
+    "pit_entry_pct":        ("pitEntryPct",      float),
+    "pit_exit_pct":         ("pitExitPct",       float),
 }
 
 
@@ -525,6 +528,17 @@ class TelemetryServer:
         payload["pit_config"] = pit_config
         payload["pit_cal"] = pit_cal
 
+        # Deterministische Pit-Marken aus der Kalibrierung bevorzugen (sonst
+        # bleibt die All-Cars-Heuristik des circle_builder als Fallback aktiv).
+        circ = payload.get("circle")
+        if isinstance(circ, dict):
+            pe = pit_config.get("pitEntryPct")
+            px = pit_config.get("pitExitPct")
+            if isinstance(pe, (int, float)):
+                circ["pit_entry_pct"] = pe
+            if isinstance(px, (int, float)):
+                circ["pit_exit_pct"] = px
+
         # --- Car-Count Korrektur ---
         standings_list = payload.get("standings")
         if not isinstance(standings_list, list):
@@ -576,6 +590,9 @@ class TelemetryServer:
                     cal.reset()
 
         # Spieler-Kontext füttern (nur sinnvoll wenn verbunden)
+        live_tires_selected = None
+        live_fuel_selected = None
+        live_fuel_amount = None
         if self.ir.is_connected:
             time = self._player_scalar("SessionTime")
             on_pit = self._player_scalar("OnPitRoad")
@@ -592,15 +609,35 @@ class TelemetryServer:
                 if v > 0.5:
                     ref_lap = v
                     break
+            # Deterministische Pit-Service-Signale (None, falls nicht vorhanden)
+            pitstop_active = self._player_scalar("PitstopActive")
+            pit_sv_flags = self._player_scalar("PitSvFlags")
+            pit_sv_fuel = self._player_scalar("PitSvFuel")   # gewählte Tankmenge
             try:
                 cal.feed(time=float(time) if time is not None else None,
                          on_pit=on_pit,
                          speed=float(speed) if speed is not None else None,
                          fuel=float(fuel) if fuel is not None else None,
                          pct=float(pct) if pct is not None else None,
-                         ref_lap=ref_lap)
+                         ref_lap=ref_lap,
+                         pitstop_active=bool(pitstop_active) if pitstop_active is not None else None,
+                         pit_sv_flags=int(pit_sv_flags) if pit_sv_flags is not None else None)
             except Exception:
                 logger.exception("Fehler in PitCalibrator.feed")
+
+            # Live-Reifenauswahl aus der Blackbox merken (nach pit_config-Bau setzen)
+            if pit_sv_flags is not None:
+                try:
+                    f = int(pit_sv_flags)
+                    live_tires_selected = bin(f & 0x0F).count("1")
+                    live_fuel_selected = bool(f & 0x10)
+                except (TypeError, ValueError):
+                    pass
+            if pit_sv_fuel is not None:
+                try:
+                    live_fuel_amount = float(pit_sv_fuel)
+                except (TypeError, ValueError):
+                    pass
 
         # pit_config = Defaults+Config, dann gelernte Werte (gewinnen) drüber
         pit_config = dict(self._cached_pit_config)
@@ -614,6 +651,14 @@ class TelemetryServer:
                         pass
         except Exception:
             logger.exception("Fehler beim Einmischen gelernter Pit-Werte")
+
+        # Live-Reifenauswahl (Blackbox) in den Payload (für Anzeige + Skalierung)
+        if live_tires_selected is not None:
+            pit_config["tiresSelected"] = live_tires_selected
+        if live_fuel_selected is not None:
+            pit_config["fuelSelected"] = live_fuel_selected
+        if live_fuel_amount is not None:
+            pit_config["fuelAmount"] = live_fuel_amount
 
         return pit_config, cal.status()
 

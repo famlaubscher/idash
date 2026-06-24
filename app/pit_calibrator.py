@@ -5,12 +5,24 @@
 # Telemetrie GEMESSEN (nicht angenommen) und pro Strecke/Layout/Auto/Serie
 # in pit_cache.json gespeichert:
 #
-#   1) Boxen-DURCHFAHRT (ohne Halt)  -> pit_lane_loss_sec
-#   2) Tankstopp (von ~leer auf voll) -> fuel_rate_lps
-#   3) Reifen-only-Stopp (kein Tanken) -> tire_change_sec
+#   1) Boxen-DURCHFAHRT (ohne Halt)  -> pit_lane_loss_sec (+ Pit-Marken)
+#   2) Tankstopp                      -> fuel_rate_lps
+#   3) Reifen-Stopp (kein Tanken)     -> tire_change_sec (auf 4 Reifen normiert)
 #
 # Die Schritte können in beliebiger Reihenfolge gefahren werden; jeder füllt
 # seinen Slot. Sind alle drei gemessen, gilt die Kalibrierung als komplett.
+#
+# DETERMINISTISCH statt heuristisch: Ob ein Service stattfindet und WAS gemacht
+# wird, kommt aus der iRacing-Telemetrie — PitstopActive (Service-Fenster) und
+# PitSvFlags (welche Reifen / Sprit). Die Speed-Stillstands- und
+# Sprit-Schwellen-Heuristik dient nur noch als Fallback (alte Aufnahmen ohne
+# diese Felder). Zusätzlich werden die EXAKTEN Boxen-Ein-/Ausfahrt-Positionen
+# (LapDistPct) festgehalten und ersetzen die All-Cars-Heuristik im circle_builder.
+#
+# Reifenmodell: gemessen wird die Service-Dauer eines Reifen-Stopps; sie wird
+# über die Reifenanzahl (PitSvFlags) auf "alle 4" normiert
+# (tire_change_sec = dauer × 4 / anzahl). Die Standzeit für n Reifen ergibt sich
+# später als tire_change_sec × n/4.
 
 import json
 import math
@@ -19,10 +31,14 @@ import sys
 
 
 # Schwellen
-_STOP_SPEED = 0.7        # m/s — darunter gilt das Auto als "steht"
+_STOP_SPEED = 0.7        # m/s — darunter gilt das Auto als "steht" (nur Fallback)
 _MIN_STATIONARY = 1.2    # s   — so lange muss es stehen, damit es ein "Stopp" ist
-_MIN_REFUEL_L = 2.0      # L   — ab so viel Nachtanken gilt es als Tankstopp
-_MAX_TIRE_FLAT_L = 0.6   # L   — darunter gilt der Tankstand als "flach" (Reifen-only)
+_MIN_REFUEL_L = 2.0      # L   — ab so viel Nachtanken gilt es als Tankstopp (Fallback)
+_MAX_TIRE_FLAT_L = 0.6   # L   — darunter gilt der Tankstand als "flach" (Fallback)
+
+# iRacing-Blackbox (PitSvFlags) — deterministisch, was beim Stopp gemacht wird.
+_PITSV_TIRE_MASK = 0x0F  # LF|RF|LR|RR — gesetzte Bits = Anzahl gewechselter Reifen
+_PITSV_FUEL      = 0x10   # FuelFill-Bit
 
 
 def _cache_path() -> str:
@@ -51,10 +67,34 @@ class PitCalibrator:
         self._entry_time = None
         self._entry_pct = None
         self._last_ontrack_pct = None
-        self._stationary_start = None
-        self._stationary_end = None
-        self._fuel_samples = []          # (time, fuel) während des Stehens
-        self._saw_stationary = False
+        self._svc_start = None           # Beginn Service-Fenster (PitstopActive/Stillstand)
+        self._svc_end = None             # Ende Service-Fenster
+        self._svc_active = False         # fand in diesem Besuch ein Service statt?
+        self._was_stationary = False     # Auto stand (speed < _STOP_SPEED)
+        self._sv_flags = 0               # OR der PitSvFlags während des Besuchs
+        self._saw_flags = False          # PitSvFlags überhaupt empfangen?
+        self._fuel_samples = []          # (time, fuel) während des Service
+
+        # Deterministische Boxen-Ein-/Ausfahrt-Marken (LapDistPct) + Reifeninfo
+        self._pit_entry_pct = None
+        self._pit_exit_pct = None
+        self._tires_last = None          # Reifenanzahl des letzten Reifen-Stopps
+
+        # Arming-Gate: erst scharf, wenn das Auto die Box einmal verlassen hat
+        # UND eine Referenzrunde vorliegt (siehe feed()).
+        self._armed = False
+        self._ref_lap = None     # s — zuletzt gesehene Rundenzeit (nur fürs Gate)
+
+        # Referenz-Runden-Erfassung: wir sammeln abgeschlossene Runden und
+        # markieren jede Runde mit Boxen-Kontakt (In-/Out-/Durchfahrtsrunde) als
+        # "unsauber". Als Tempomaß für den Pit-Verlust dient die SCHNELLSTE
+        # SAUBERE (grüne) Runde. Der Pit-Verlust wird nachgerechnet, sobald (oder
+        # eine schnellere) saubere Runde vorliegt — auch wenn die Durchfahrt
+        # bereits davor gefahren wurde.
+        self._best_clean_lap = None   # s — schnellste saubere Runde
+        self._lap_had_pit = True      # hatte die laufende Runde Boxen-Kontakt?
+        self._prev_ref_lap = None     # zur Flankenerkennung "Runde abgeschlossen"
+        self._dt_raw = None           # (transit, span) der gemessenen Durchfahrt
 
         # Letzte Statusmeldung fürs Overlay
         self._last_event = ""
@@ -74,8 +114,18 @@ class PitCalibrator:
         self.pit_loss = None
         self.fuel_rate = None
         self.tire_time = None
+        self._armed = False
+        self._ref_lap = None
+        self._best_clean_lap = None
+        self._lap_had_pit = True
+        self._prev_ref_lap = None
+        self._dt_raw = None
+        self._prev_on_pit = False
+        self._pit_entry_pct = None
+        self._pit_exit_pct = None
+        self._tires_last = None
         self._reset_visit()
-        self._last_event = "Kalibrierung gestartet"
+        self._last_event = "Kalibrierung gestartet — Box verlassen & Referenzrunde fahren"
 
     def stop(self):
         """Beendet den Lauf und speichert, was gemessen wurde."""
@@ -86,16 +136,25 @@ class PitCalibrator:
 
     def reset(self):
         self.pit_loss = self.fuel_rate = self.tire_time = None
+        self._armed = False
+        self._best_clean_lap = None
+        self._lap_had_pit = True
+        self._prev_ref_lap = None
+        self._dt_raw = None
+        self._prev_on_pit = False
         self._reset_visit()
         self._last_event = "zurückgesetzt"
 
     def _reset_visit(self):
         self._entry_time = None
         self._entry_pct = None
-        self._stationary_start = None
-        self._stationary_end = None
+        self._svc_start = None
+        self._svc_end = None
+        self._svc_active = False
+        self._was_stationary = False     # Auto stand (speed < _STOP_SPEED)
+        self._sv_flags = 0
+        self._saw_flags = False          # PitSvFlags überhaupt empfangen?
         self._fuel_samples = []
-        self._saw_stationary = False
 
     def _any_measured(self) -> bool:
         return any(v is not None for v in (self.pit_loss, self.fuel_rate, self.tire_time))
@@ -107,8 +166,13 @@ class PitCalibrator:
     # Fütterung pro Tick
     # ------------------------------------------------------------------
 
-    def feed(self, *, time, on_pit, speed, fuel, pct, ref_lap):
-        """Verarbeitet einen Telemetrie-Tick des SPIELERS."""
+    def feed(self, *, time, on_pit, speed, fuel, pct, ref_lap,
+             pitstop_active=None, pit_sv_flags=None):
+        """Verarbeitet einen Telemetrie-Tick des SPIELERS.
+
+        pitstop_active / pit_sv_flags sind die deterministischen iRacing-Signale
+        (PitstopActive, PitSvFlags). Fehlen sie (None, z.B. alte Aufnahme), wird
+        auf die Speed-/Sprit-Heuristik zurückgefallen."""
         if not self.active:
             return
         if time is None or pct is None:
@@ -116,29 +180,88 @@ class PitCalibrator:
 
         on_pit = bool(on_pit)
 
+        # Referenzrunde mitführen (für Anzeige, Durchfahrt-Messung und Gate).
+        if ref_lap is not None and ref_lap > 0.5:
+            self._ref_lap = float(ref_lap)
+
+        # Arming-Gate: NICHT messen, solange die Kalibrierung nicht "scharf" ist.
+        # Scharf wird sie erst, wenn das Auto auf der Strecke ist (Box mindestens
+        # einmal verlassen) UND eine gültige Referenzrunde vorliegt. Ohne dieses
+        # Gate würde ein beim Start bereits laufender Boxenbesuch (Auto steht
+        # schon in der Box) sofort fälschlich als Reifen-/Tankstopp gemessen.
+        if not self._armed:
+            if (not on_pit) and self._ref_lap is not None:
+                self._armed = True
+                self._reset_visit()
+                self._prev_on_pit = on_pit          # = False (auf Strecke)
+                self._last_ontrack_pct = pct
+                # Runden-Erfassung scharf stellen: die gerade laufende Runde ist
+                # die Out-Lap (Box verlassen) -> als unsauber markieren.
+                self._prev_ref_lap = self._ref_lap
+                self._lap_had_pit = True
+                self._last_event = "Bereit — Kalibrierung scharf"
+                return
+            if not on_pit:
+                self._last_ontrack_pct = pct
+                self._last_event = "Warte auf Referenzrunde…"
+            else:
+                self._last_event = "Bitte Box verlassen & Referenzrunde fahren"
+            self._prev_on_pit = on_pit
+            return
+
+        # --- Runden-Erfassung für die Referenz (schnellste saubere Runde) ---
+        # Flanke "neue offizielle Rundenzeit" => vorige Runde ist abgeschlossen.
+        if ref_lap is not None and ref_lap > 0.5 and ref_lap != self._prev_ref_lap:
+            if self._prev_ref_lap is not None:      # erste Flanke nach Arming überspringen
+                if not self._lap_had_pit:           # nur grüne Runden zählen
+                    if self._best_clean_lap is None or ref_lap < self._best_clean_lap:
+                        self._best_clean_lap = round(float(ref_lap), 3)
+                        self._recompute_pit_loss()
+                        self._maybe_complete()
+            self._prev_ref_lap = ref_lap
+            self._lap_had_pit = False               # neue Runde startet sauber
+        # Boxen-Kontakt der LAUFENDEN Runde merken (In-/Out-/Durchfahrtsrunde)
+        if on_pit:
+            self._lap_had_pit = True
+
         # Boxeneinfahrt (Flanke on-track -> pit)
         if on_pit and not self._prev_on_pit:
             self._entry_time = time
             self._entry_pct = self._last_ontrack_pct if self._last_ontrack_pct is not None else pct
-            self._stationary_start = None
-            self._stationary_end = None
+            self._svc_start = None
+            self._svc_end = None
+            self._svc_active = False
+            self._was_stationary = False
+            self._sv_flags = 0
+            self._saw_flags = False
             self._fuel_samples = []
-            self._saw_stationary = False
 
-        # Während des Boxenbesuchs: Stillstand + Tankverlauf erfassen
+        # Während des Boxenbesuchs: Service-Fenster + Tankverlauf erfassen.
         if on_pit:
+            # Blackbox-Auswahl (welche Reifen / Sprit) jederzeit mitschneiden.
+            if pit_sv_flags is not None:
+                self._saw_flags = True
+                self._sv_flags |= int(pit_sv_flags)
+            # Stand das Auto? (für Durchfahrt-Abgrenzung)
             if speed is not None and speed < _STOP_SPEED:
-                if self._stationary_start is None:
-                    self._stationary_start = time
-                self._stationary_end = time
-                if (time - self._stationary_start) >= _MIN_STATIONARY:
-                    self._saw_stationary = True
+                self._was_stationary = True
+            # Service-Fenster: deterministisch über PitstopActive; Fallback Stillstand.
+            if pitstop_active is not None:
+                active = bool(pitstop_active)
+            else:
+                active = (speed is not None and speed < _STOP_SPEED)
+            if active:
+                if self._svc_start is None:
+                    self._svc_start = time
+                self._svc_end = time
                 if fuel is not None:
                     self._fuel_samples.append((time, fuel))
+                if pitstop_active is not None or (time - self._svc_start) >= _MIN_STATIONARY:
+                    self._svc_active = True
 
         # Boxenausfahrt (Flanke pit -> on-track): Besuch auswerten
         if (not on_pit) and self._prev_on_pit:
-            self._finalize_visit(exit_time=time, exit_pct=pct, ref_lap=ref_lap)
+            self._finalize_visit(exit_time=time, exit_pct=pct)
 
         # On-track-Position für die nächste Einfahrt merken
         if not on_pit:
@@ -146,50 +269,98 @@ class PitCalibrator:
 
         self._prev_on_pit = on_pit
 
-    def _finalize_visit(self, *, exit_time, exit_pct, ref_lap):
+    def _finalize_visit(self, *, exit_time, exit_pct):
         if self._entry_time is None:
             return
 
-        if not self._saw_stationary:
-            # --- Boxen-DURCHFAHRT -> Pit-Lane-Verlust ---
-            if ref_lap and ref_lap > 0.5 and self._entry_pct is not None:
+        # Deterministische Boxen-Ein-/Ausfahrt-Marken bei JEDEM Besuch festhalten
+        # (ersetzen die All-Cars-Heuristik im circle_builder).
+        if self._entry_pct is not None:
+            self._pit_entry_pct = round(self._entry_pct % 1.0, 5)
+        self._pit_exit_pct = round(exit_pct % 1.0, 5)
+
+        if not self._was_stationary:
+            # --- Boxen-DURCHFAHRT (Auto stand NIE) -> Pit-Lane-Verlust ---
+            # Rohdaten (Transit + Streckenanteil) festhalten und gegen die
+            # schnellste SAUBERE Runde rechnen. Liegt noch keine saubere Runde
+            # vor, wird der Verlust später automatisch nachgerechnet (feed()).
+            if self._entry_pct is not None:
                 transit = exit_time - self._entry_time
                 span = ((exit_pct - self._entry_pct) % 1 + 1) % 1
-                loss = transit - span * ref_lap
-                if 0.0 < loss < 120.0:
-                    self.pit_loss = round(loss, 2)
-                    self._last_event = f"Durchfahrt gemessen: Verlust {self.pit_loss:.1f}s"
-                else:
-                    self._last_event = "Durchfahrt unplausibel — bitte wiederholen"
+                if span > 0.0:
+                    self._dt_raw = (transit, span)
+                    self._recompute_pit_loss()
+                    if self.pit_loss is not None:
+                        self._last_event = f"Durchfahrt gemessen: Verlust {self.pit_loss:.1f}s"
+                    elif self._best_clean_lap is None:
+                        self._last_event = "Durchfahrt erfasst — fahre eine saubere Referenzrunde"
+                    else:
+                        self._last_event = "Durchfahrt unplausibel — bitte wiederholen"
         else:
-            # --- STOPP: tanken oder Reifen-only? ---
+            # --- STOPP (Auto stand): tanken oder Reifen? ---
+            svc_dur = (self._svc_end - self._svc_start) \
+                if (self._svc_start is not None and self._svc_end is not None) else 0.0
+
             fuels = [f for _, f in self._fuel_samples if f is not None]
             fuel_delta = (max(fuels) - min(fuels)) if len(fuels) >= 2 else 0.0
-            stationary_dur = (self._stationary_end - self._stationary_start) \
-                if (self._stationary_start is not None and self._stationary_end is not None) else 0.0
 
-            if fuel_delta >= _MIN_REFUEL_L:
+            # WAS wurde gemacht? AUSSCHLIESSLICH aus der Blackbox (PitSvFlags):
+            # Reifen-Bits = Reifenwechsel, FuelFill/Spritanstieg = Tanken. Ohne
+            # Blackbox-Info wird NICHT "4 Reifen" geraten — sonst würde jeder
+            # spritlose Stopp (Meatball, Stehenbleiben, Spawn) fälschlich als
+            # Reifenwechsel gemessen.
+            tire_count = bin(self._sv_flags & _PITSV_TIRE_MASK).count("1") if self._saw_flags else 0
+            is_fuel = (bool(self._sv_flags & _PITSV_FUEL) if self._saw_flags else False) \
+                      or fuel_delta >= _MIN_REFUEL_L
+
+            if tire_count > 0:
+                self._tires_last = tire_count
+
+            if is_fuel:
                 rate = self._fuel_rate_from_samples()
                 if rate and 0.3 < rate < 20.0:
                     self.fuel_rate = round(rate, 3)
-                    self._last_event = f"Tankrate gemessen: {self.fuel_rate:.2f} L/s"
+                    extra = " (+Reifen, Reifenzeit separat ohne Tanken messen)" if tire_count > 0 else ""
+                    self._last_event = f"Tankrate gemessen: {self.fuel_rate:.2f} L/s{extra}"
                 else:
                     self._last_event = "Tankrate unplausibel — bitte wiederholen"
-            elif fuel_delta <= _MAX_TIRE_FLAT_L:
-                if 2.0 < stationary_dur < 90.0:
-                    self.tire_time = round(stationary_dur, 2)
-                    self._last_event = f"Reifenzeit gemessen: {self.tire_time:.1f}s"
+            elif tire_count > 0:
+                # Reifen-Stopp ohne Tanken -> Service-Dauer auf 4 Reifen normieren.
+                if 2.0 < svc_dur < 90.0:
+                    self.tire_time = round(svc_dur * 4.0 / tire_count, 2)
+                    self._last_event = (
+                        f"Reifen ({tire_count}) {svc_dur:.1f}s → 4er-Zeit "
+                        f"{self.tire_time:.1f}s"
+                    )
                 else:
                     self._last_event = "Reifenzeit unplausibel — bitte wiederholen"
+            elif not self._saw_flags:
+                # Keine Blackbox-Telemetrie -> Reifen nicht messbar.
+                self._last_event = "Reifenzeit braucht Blackbox (PitSvFlags) — nicht verfügbar"
             else:
-                self._last_event = "Stopp mehrdeutig (etwas getankt) — Schritt wiederholen"
+                # Service ohne Reifen/Sprit laut Blackbox (Meatball/Reparatur/Stehen).
+                self._last_event = "Stopp ohne Reifen/Sprit (Blackbox) — nicht gemessen"
 
         # Bei Komplettierung automatisch speichern
+        self._maybe_complete()
+
+        self._reset_visit()
+
+    def _recompute_pit_loss(self):
+        """Pit-Verlust = Pitlane-Transit − (Streckenanteil × schnellste saubere
+        Runde). Wird neu berechnet, wenn eine Durchfahrt gemessen wurde UND eine
+        (schnellere) saubere Referenzrunde vorliegt."""
+        if self._dt_raw is None or self._best_clean_lap is None:
+            return
+        transit, span = self._dt_raw
+        loss = transit - span * self._best_clean_lap
+        if 0.0 < loss < 120.0:
+            self.pit_loss = round(loss, 2)
+
+    def _maybe_complete(self):
         if self.active and self._key and self.is_complete():
             self._save_partial(self._key)
             self._last_event = "Kalibrierung komplett & gespeichert ✓"
-
-        self._reset_visit()
 
     def _fuel_rate_from_samples(self):
         """Robuste Steigung L/s aus den (time, fuel)-Proben während des Tankens.
@@ -221,9 +392,16 @@ class PitCalibrator:
     def status(self) -> dict:
         return {
             "active":   self.active,
+            "armed":    self._armed,
+            # Angezeigte Referenz = schnellste SAUBERE Runde (stabil, das Maß für
+            # den Pit-Verlust). None, solange noch keine grüne Runde vorliegt.
+            "ref_lap":  self._best_clean_lap,
             "pit_loss": self.pit_loss,
             "fuel_rate": self.fuel_rate,
-            "tire_time": self.tire_time,
+            "tire_time": self.tire_time,           # auf 4 Reifen normiert
+            "tires_last": self._tires_last,        # Reifenanzahl des letzten Stopps
+            "pit_entry_pct": self._pit_entry_pct,
+            "pit_exit_pct":  self._pit_exit_pct,
             "complete": self.is_complete(),
             "event":    self._last_event,
         }
@@ -255,6 +433,10 @@ class PitCalibrator:
             entry["fuel_rate_lps"] = self.fuel_rate
         if self.tire_time is not None:
             entry["tire_change_sec"] = self.tire_time
+        if self._pit_entry_pct is not None:
+            entry["pit_entry_pct"] = self._pit_entry_pct
+        if self._pit_exit_pct is not None:
+            entry["pit_exit_pct"] = self._pit_exit_pct
         self._cache[key] = entry
         try:
             p = _cache_path()

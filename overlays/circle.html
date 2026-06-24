@@ -183,6 +183,13 @@
       margin-top: 2px;
     }
     .center-wait { font-size: 11px; color: #475569; }
+    /* Dauer-Übersicht (Zeitverlust) dauerhaft im Zentrum */
+    .center-losses {
+      font-size: 10px; color: #93c5fd; margin-top: 6px; line-height: 1.4;
+      font-variant-numeric: tabular-nums;
+    }
+    .center-losses .cl-val { color: #f1f5f9; font-weight: 800; }
+    .center-losses .cl-lbl { color: #64748b; }
 
     /* Pit-Phasen-Label in der Kreismitte */
     .center-pit {
@@ -211,6 +218,12 @@
       font-size: 11px; font-weight: 900; letter-spacing: 0.14em;
       color: #93c5fd; text-align: center; margin-bottom: 9px;
     }
+    .cal-ref {
+      font-size: 10px; text-align: center; margin-bottom: 9px;
+      color: #94a3b8; font-variant-numeric: tabular-nums;
+    }
+    .cal-ref .cal-ref-val { color: #e2e8f0; font-weight: 700; }
+    .cal-ref.missing .cal-ref-val { color: #f87171; }
     .cal-step {
       display: flex; align-items: center; gap: 7px;
       font-size: 11px; color: #cbd5e1; margin: 5px 0;
@@ -271,11 +284,13 @@
         <div id="center-pit" class="center-pit" style="display:none"></div>
         <div id="center-track" class="center-track"></div>
         <div id="center-sub" class="center-sub"></div>
+        <div id="center-losses" class="center-losses" style="display:none"></div>
       </div>
 
       <!-- Kalibrier-Panel (nur im Kalibrier-Modus sichtbar) -->
       <div id="cal-panel" class="cal-panel" style="display:none">
         <div class="cal-title">PIT-KALIBRIERUNG</div>
+        <div class="cal-ref" id="cal-ref">Referenz (schnellste saubere Runde): <span class="cal-ref-val">—</span></div>
         <div class="cal-step" id="cal-s1"><span class="cal-box"></span><span class="cal-txt">1 · Boxen-Durchfahrt (ohne Halt)</span><span class="cal-val"></span></div>
         <div class="cal-step" id="cal-s2"><span class="cal-box"></span><span class="cal-txt">2 · Tankstopp (leer → voll)</span><span class="cal-val"></span></div>
         <div class="cal-step" id="cal-s3"><span class="cal-box"></span><span class="cal-txt">3 · Reifen-only (kein Tanken)</span><span class="cal-val"></span></div>
@@ -314,6 +329,9 @@
       manualRefuelL:   null,   // feste Tankmenge in L (überschreibt IMMER, auch live)
       refuelFallbackL: null,   // Tankmenge, wenn keine Fuel-Telemetrie da ist (z.B. Replay)
       refLapFallbackSec: 100.0, // Ersatz-Rundenzeit, solange keine echte vorliegt
+      tiresSelected:   null,   // live aus Blackbox (0–4); null = unbekannt -> changeTires
+      fuelSelected:    null,   // live aus Blackbox: wird getankt?
+      fuelAmount:      null,   // live aus Blackbox: gewählte Tankmenge (L)
     };
     // Bekannte Keys, die aus overlay_config.json["pit"] übernommen werden dürfen.
     const PIT_CONFIG_KEYS = Object.keys(PIT_CONFIG);
@@ -336,8 +354,52 @@
     const centerTrk = document.getElementById("center-track");
     const centerSub = document.getElementById("center-sub");
     const centerPit = document.getElementById("center-pit");
+    const centerLosses = document.getElementById("center-losses");
+
+    // Dauerhafte Dauer-Übersicht: Zeitverlust Durchfahrt + Volltank-Stopp.
+    function updateCenterLosses(strategy) {
+      const loss = PIT_CONFIG.pitLaneLossSec;
+      const rate = PIT_CONFIG.fuelRateLps;
+      const tire4 = PIT_CONFIG.tireChangeSec;       // alle 4 Reifen
+      if (!Number.isFinite(loss) || loss <= 0) { centerLosses.style.display = "none"; return; }
+
+      // Tankvolumen: echte Telemetrie -> Refuel-Fallback
+      let tank = (strategy && Number.isFinite(strategy.fuel_tank_capacity))
+        ? strategy.fuel_tank_capacity : null;
+      if (tank == null && Number.isFinite(PIT_CONFIG.refuelFallbackL)) tank = PIT_CONFIG.refuelFallbackL;
+
+      const fmt = s => (s >= 100 ? s.toFixed(0) : s.toFixed(1)) + "s";
+      let html = `<span class="cl-lbl">Drive-Thru</span> <span class="cl-val">${fmt(loss)}</span>`;
+      if (Number.isFinite(tank) && tank > 0 && rate > 0) {
+        const refuelFull = tank / rate;
+        const standing   = Math.max(refuelFull, Number.isFinite(tire4) ? tire4 : 0);
+        html += `<br><span class="cl-lbl">Stop voll</span> <span class="cl-val">${fmt(loss + standing)}</span>`;
+      }
+
+      // Live-Auswahl aus der Blackbox: spiegelt Reifen-Ab/Anwahl + Sprit sofort.
+      // Zeigt "n/a", wenn die Felder (PitSvFlags) nicht lesbar sind -> Diagnose.
+      if (Number.isFinite(PIT_CONFIG.tiresSelected) || Number.isFinite(PIT_CONFIG.fuelAmount)) {
+        const tires = Number.isFinite(PIT_CONFIG.tiresSelected) ? PIT_CONFIG.tiresSelected : 0;
+        const tSel  = Number.isFinite(tire4) ? tire4 * tires / 4 : 0;
+        // Tankmenge: Blackbox-Auswahl -> Strategie -> 0
+        let liters = (PIT_CONFIG.fuelSelected && Number.isFinite(PIT_CONFIG.fuelAmount))
+          ? PIT_CONFIG.fuelAmount
+          : (strategy && Number.isFinite(strategy.refuel_next_stop) ? strategy.refuel_next_stop : 0);
+        if (!(liters > 0)) liters = 0;
+        const rSel  = rate > 0 ? liters / rate : 0;
+        const tStop = loss + Math.max(tSel, rSel);
+        const fuelTxt = liters > 0 ? ` · ${liters.toFixed(0)} L` : " · kein Sprit";
+        html += `<br><span class="cl-lbl">Gewählt</span> <span class="cl-val">${tires} Reifen${fuelTxt}</span>`
+              + ` <span class="cl-lbl">→</span> <span class="cl-val">${fmt(tStop)}</span>`;
+      } else {
+        html += `<br><span class="cl-lbl">Blackbox</span> <span class="cl-val">n/a</span>`;
+      }
+      centerLosses.innerHTML = html;
+      centerLosses.style.display = "";
+    }
     const calPanel  = document.getElementById("cal-panel");
     const calEvent  = document.getElementById("cal-event");
+    const calRef    = document.getElementById("cal-ref");
     const calSteps  = {
       pit_loss:  document.getElementById("cal-s1"),
       fuel_rate: document.getElementById("cal-s2"),
@@ -544,7 +606,12 @@
       if (!Number.isFinite(liters) || liters < 0) liters = 0;
 
       const refuelSec = PIT_CONFIG.fuelRateLps > 0 ? liters / PIT_CONFIG.fuelRateLps : 0;
-      const tireSec   = PIT_CONFIG.changeTires ? PIT_CONFIG.tireChangeSec : 0;
+      // Reifen-Standzeit nach Anzahl gewählter Reifen (Blackbox). tireChangeSec
+      // gilt für alle 4 -> linear skalieren. Ohne Live-Info: changeTires (4/0).
+      const tireCount = Number.isFinite(PIT_CONFIG.tiresSelected)
+        ? PIT_CONFIG.tiresSelected
+        : (PIT_CONFIG.changeTires ? 4 : 0);
+      const tireSec   = PIT_CONFIG.tireChangeSec * tireCount / 4;
       const standing  = Math.max(refuelSec, tireSec);        // Standzeit (Tanken ∥ Reifen)
       const tPit      = PIT_CONFIG.pitLaneLossSec + standing;
       if (!(tPit > 0)) return null;
@@ -692,9 +759,19 @@
     }
 
     // ---- Kalibrier-Panel ----
+    function fmtLapTime(sec) {
+      if (!Number.isFinite(sec) || sec <= 0.5) return null;
+      const m = Math.floor(sec / 60);
+      const s = sec - m * 60;
+      return `${m}:${s.toFixed(3).padStart(6, "0")}`;
+    }
+
     function updateCalibration(cal) {
       if (!cal || !cal.active) { calPanel.style.display = "none"; return; }
       calPanel.style.display = "";
+      const refStr = fmtLapTime(cal.ref_lap);
+      calRef.classList.toggle("missing", !refStr);
+      calRef.querySelector(".cal-ref-val").textContent = refStr || "—";
       const fmt = { pit_loss: v => v.toFixed(1) + "s",
                     fuel_rate: v => v.toFixed(2) + " L/s",
                     tire_time: v => v.toFixed(1) + "s" };
@@ -720,6 +797,7 @@
       const track = circle.track_name || "";
       centerTrk.textContent = track;
       centerSub.textContent = cars.length ? (cars.length + " Cars") : "warte auf iRacing";
+      updateCenterLosses(strategy);
 
       // Nicht mehr vorhandene Autos entfernen
       const present = new Set(cars.map(c => c.car_idx));
