@@ -59,14 +59,15 @@ COLUMN_DEFS = {
         ("car_logo",   "Logo",      True),
         ("name",       "Driver",    True),
         ("license",    "Lic / IR",  True),
+        ("tyre",       "Tyre",      True),
         ("gap_front",  "Int",       True),
         ("gap_lead",   "Gap",       True),
         ("best_lap",   "Best",      True),
         ("last_lap",   "Last",      True),
-        ("pit_stops",  "Stops",     False),
-        ("stint_laps", "Stint",     False),
-        ("pit_time",   "Pit T.",    False),
-        ("pit_status", "Status",    False),
+        ("pit_stops",  "Stops",     True),
+        ("stint_laps", "Stint",     True),
+        ("pit_time",   "Pit T.",    True),
+        ("pit_status", "Status",    True),
     ],
     "relative": [
         ("pos",        "Pos",       True),
@@ -75,13 +76,13 @@ COLUMN_DEFS = {
         ("tyre",       "Tyre",      True),
         ("car_class",  "Class",     True),
         ("gap",        "Gap",       True),
-        ("delta",      "Delta",     False),
-        ("best_lap",   "Best",      False),
-        ("last_lap",   "Last",      False),
-        ("pit_stops",  "Stops",     False),
-        ("stint_laps", "Stint",     False),
-        ("pit_time",   "Pit T.",    False),
-        ("pit_status", "Status",    False),
+        ("delta",      "Delta",     True),
+        ("best_lap",   "Best",      True),
+        ("last_lap",   "Last",      True),
+        ("pit_stops",  "Stops",     True),
+        ("stint_laps", "Stint",     True),
+        ("pit_time",   "Pit T.",    True),
+        ("pit_status", "Status",    True),
     ],
 }
 
@@ -399,23 +400,91 @@ class OverlayConfigWindow(QWidget):
             main.addWidget(self._divider())
             main.addSpacing(10)
             main.addWidget(self._section("SPALTEN"))
-            main.addSpacing(8)
+            main.addSpacing(6)
 
-            saved = self.manager.layout_state.get("columns", {}).get(self.overlay_key, {})
+            saved_vis   = self.manager.layout_state.get("columns",   {}).get(self.overlay_key, {})
+            saved_order = self.manager.layout_state.get("col_order", {}).get(self.overlay_key, [])
 
-            grid = QGridLayout()
-            grid.setSpacing(2)
-            grid.setColumnStretch(0, 1)
-            grid.setColumnStretch(1, 1)
+            # Build ordered list: saved order first, then any new keys appended
+            all_keys = [k for k, _, _ in col_defs]
+            ordered_keys = [k for k in saved_order if k in all_keys]
+            ordered_keys += [k for k in all_keys if k not in ordered_keys]
+            # Map key -> (label, default)
+            col_info = {k: (lbl, dflt) for k, lbl, dflt in col_defs}
 
-            for i, (key, label, default) in enumerate(col_defs):
-                chk = QCheckBox(label)
-                chk.setChecked(saved.get(key, default))
-                chk.stateChanged.connect(lambda state, k=key: self._on_col_changed(k, state))
-                grid.addWidget(chk, i // 2, i % 2)
-                self._col_checkboxes[key] = chk
+            self._col_order = ordered_keys[:]  # mutable list for reordering
 
-            main.addLayout(grid)
+            col_list = QVBoxLayout()
+            col_list.setSpacing(2)
+
+            def _rebuild_col_list():
+                # Clear and rebuild the list widget
+                while col_list.count():
+                    item = col_list.takeAt(0)
+                    w = item.widget()
+                    if w:
+                        w.deleteLater()
+                self._col_checkboxes.clear()
+                for pos, k in enumerate(self._col_order):
+                    lbl, dflt = col_info[k]
+                    row_w = QWidget()
+                    row_l = QHBoxLayout(row_w)
+                    row_l.setContentsMargins(0, 0, 0, 0)
+                    row_l.setSpacing(4)
+
+                    chk = QCheckBox(lbl)
+                    chk.setChecked(saved_vis.get(k, dflt))
+                    chk.stateChanged.connect(lambda state, key=k: self._on_col_changed(key, state))
+                    self._col_checkboxes[k] = chk
+                    row_l.addWidget(chk, 1)
+
+                    btn_up = QPushButton("↑")
+                    btn_up.setFixedSize(30, 26)
+                    btn_up.setStyleSheet("font-size: 15pt; font-weight: 700;")
+                    btn_up.setEnabled(pos > 0)
+                    btn_up.clicked.connect(lambda _, idx=pos: _move_col(idx, -1))
+                    row_l.addWidget(btn_up)
+
+                    btn_dn = QPushButton("↓")
+                    btn_dn.setFixedSize(30, 26)
+                    btn_dn.setStyleSheet("font-size: 15pt; font-weight: 700;")
+                    btn_dn.setEnabled(pos < len(self._col_order) - 1)
+                    btn_dn.clicked.connect(lambda _, idx=pos: _move_col(idx, +1))
+                    row_l.addWidget(btn_dn)
+
+                    col_list.addWidget(row_w)
+
+            def _move_col(idx: int, delta: int):
+                new_idx = idx + delta
+                if new_idx < 0 or new_idx >= len(self._col_order):
+                    return
+                self._col_order[idx], self._col_order[new_idx] = \
+                    self._col_order[new_idx], self._col_order[idx]
+                orders = self.manager.layout_state.setdefault("col_order", {})
+                orders[self.overlay_key] = self._col_order[:]
+                self.manager._save_layout_state()
+                self.manager._push_columns_to_overlay(self.overlay_key)
+                _rebuild_col_list()
+
+            def _reset_cols():
+                self._col_order = [k for k, _, _ in col_defs]
+                saved_vis.clear()
+                saved_vis.update({k: dflt for k, _, dflt in col_defs})
+                orders = self.manager.layout_state.setdefault("col_order", {})
+                orders[self.overlay_key] = self._col_order[:]
+                cols = self.manager.layout_state.setdefault("columns", {})
+                cols[self.overlay_key] = dict(saved_vis)
+                self.manager._save_layout_state()
+                self.manager._push_columns_to_overlay(self.overlay_key)
+                _rebuild_col_list()
+
+            _rebuild_col_list()
+            main.addLayout(col_list)
+
+            main.addSpacing(6)
+            btn_reset = QPushButton("↺  Standard wiederherstellen")
+            btn_reset.clicked.connect(_reset_cols)
+            main.addWidget(btn_reset)
 
         main.addStretch()
 
@@ -682,7 +751,7 @@ class OverlayManager(QWidget):
         win.activateWindow()
 
     def _push_columns_to_overlay(self, key: str):
-        """Schickt aktuelle Spalten-Config per JS ans Overlay."""
+        """Schickt aktuelle Spalten-Config (Sichtbarkeit + Reihenfolge) per JS ans Overlay."""
         win = getattr(self, f"{key}_overlay", None)
         if not win or not getattr(win, "webview", None):
             return
@@ -693,6 +762,13 @@ class OverlayManager(QWidget):
         cfg = {col_key: saved.get(col_key, default) for col_key, _, default in defs}
         js = f"if (window.setColumns) window.setColumns({json.dumps(cfg)});"
         win.webview.page().runJavaScript(js)
+
+        saved_order = self.layout_state.get("col_order", {}).get(key, [])
+        all_keys = [k for k, _, _ in defs]
+        order = [k for k in saved_order if k in all_keys]
+        order += [k for k in all_keys if k not in order]
+        js2 = f"if (window.setColumnOrder) window.setColumnOrder({json.dumps(order)});"
+        win.webview.page().runJavaScript(js2)
 
     def _push_visibility_mode_to_overlay(self, key: str):
         """Schickt den Sichtbarkeits-Modus per JS ans Overlay."""

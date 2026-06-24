@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="de">
 <head>
   <meta charset="UTF-8" />
@@ -32,7 +32,7 @@
       padding: 8px;
     }
 
-    /* ── Wrapper & resize ──────────────────────────── */
+    /* â”€â”€ Wrapper & resize â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
     .standings-wrapper {
       display: inline-block;
       position: relative;
@@ -51,10 +51,9 @@
       opacity: 0.8; pointer-events: auto;
     }
 
-    /* ── Card ──────────────────────────────────────── */
+    /* â”€â”€ Card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
     .overlay-root {
       min-width: 540px;
-      max-width: 760px;
       display: inline-flex;
       flex-direction: column;
       gap: 0;
@@ -67,7 +66,7 @@
       outline: 2px solid rgba(248,113,113,0.9);
     }
 
-    /* ── Session bar ───────────────────────────────── */
+    /* â”€â”€ Session bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
     .session-bar {
       display: flex;
       flex-direction: column;
@@ -86,12 +85,12 @@
     .session-class { font-size: 12px; font-weight: 700; color: #e5e7eb; letter-spacing: 0.06em; }
     .session-time { font-size: 12px; font-weight: 500; flex-shrink: 0; }
 
-    /* ── Table ─────────────────────────────────────── */
+    /* â”€â”€ Table â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
     table {
-      width: 100%;
+      width: auto;
       border-collapse: collapse;
       font-size: 13px;
-      table-layout: fixed;
+      table-layout: auto;
     }
 
     thead tr {
@@ -115,18 +114,19 @@
 
     /* Column widths */
     th.pos        { width: 34px;  text-align: right; }
-    th.car        { width: 34px;  text-align: right; }
+    th.car        { width: 38px;  text-align: right; }
     th.brand      { width: 34px;  text-align: center; }
     th.name       { min-width: 80px; }
-    th.lic        { width: 76px;  text-align: center; }
+    th.lic        { width: 70px;  text-align: center; }
+    th.tyre       { width: 44px;  text-align: center; }
     th.gap-front  { width: 52px;  text-align: right; }
-    th.gap-lead   { width: 62px;  text-align: right; }
+    th.gap-lead   { width: 58px;  text-align: right; }
     th.fast       { width: 72px;  text-align: right; }
     th.last       { width: 72px;  text-align: right; }
-    th.pit-stops  { width: 38px;  text-align: right; }
-    th.pit-stint  { width: 42px;  text-align: right; }
+    th.pit-stops  { width: 34px;  text-align: right; }
+    th.pit-stint  { width: 40px;  text-align: right; }
     th.pit-time   { width: 46px;  text-align: right; }
-    th.pit-status { width: 44px;  text-align: center; }
+    th.pit-status { width: 36px;  text-align: center; }
 
     /* Rows */
     tbody tr {
@@ -194,6 +194,14 @@
     }
 
     td.lic-cell { text-align: center; }
+
+    td.tyre-cell { text-align: center; }
+    .tyre-dot {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 14px; height: 14px; border-radius: 50%;
+      background: #ffffff; font-size: 9px; font-weight: 700; color: #000000;
+    }
+    .tyre-dot.wet { background: #3b82f6; color: #e5e7eb; }
 
     /* Gap colors */
     .gap-positive { color: var(--accent-pos); }
@@ -267,6 +275,7 @@
             <th class="team"      id="th-team" style="display:none">Team</th>
             <th class="name"      data-col="name">Driver</th>
             <th class="lic"       data-col="license">Lic / IR</th>
+            <th class="tyre"      data-col="tyre">Tyre</th>
             <th class="gap-front" data-col="gap_front">Int</th>
             <th class="gap-lead"  data-col="gap_lead">Gap</th>
             <th class="fast"      data-col="best_lap">Best</th>
@@ -274,12 +283,12 @@
             <th class="pit-stops" data-col="pit_stops">Pts</th>
             <th class="pit-stint" data-col="stint_laps">Stint</th>
             <th class="pit-time"  data-col="pit_time">Pit T.</th>
-            <th class="pit-status"data-col="pit_status">●</th>
+            <th class="pit-status"data-col="pit_status">â—</th>
           </tr>
         </thead>
         <tbody id="standings-body">
           <tr class="empty-row">
-            <td colspan="9">Warte auf iRacing&hellip;</td>
+            <td colspan="99">Warte auf iRacing&hellip;</td>
           </tr>
         </tbody>
       </table>
@@ -315,7 +324,7 @@
       standingsWrapper?.classList.toggle("edit-mode", !!edit);
     };
 
-    // ── Resize ───────────────────────────────────────
+    // â”€â”€ Resize â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     function onStandingsResizeMove(e) {
       if (!isResizingStandings || !standingsBaseWidth || !standingsWrapper) return;
       const dx = e.clientX - standingsResizeStartX;
@@ -363,7 +372,7 @@
       return "";
     }
 
-    // ── Formatters ────────────────────────────────────
+    // â”€â”€ Formatters â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     function formatIRating(ir) {
       if (!Number.isFinite(ir)) return "";
       if (ir >= 9500) return "9.5K";
@@ -405,7 +414,7 @@
       return "";
     }
 
-    // ── Row builder ───────────────────────────────────
+    // â”€â”€ Row builder â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     function buildRowHtml(row, classBest, isTeamRace) {
       const carNum = row.car_number ?? row.carNumber ?? "";
       const pos    = row._class_pos ?? row.pos ?? row.position ?? "";
@@ -441,6 +450,11 @@
       const licHtml   = (licText || licCls)
         ? `<div class="lic-badge ${licCls}">${licText}</div>` : "";
 
+      const tyre = (row.tyre || "").toLowerCase();
+      const tyreClass = tyre.includes("wet") ? "wet" : tyre.includes("dry") ? "dry" : "";
+      const tyreLabel = tyre.includes("wet") ? "W" : tyre.includes("dry") ? "D" : "";
+      const tyreHtml  = tyreClass ? `<span class="tyre-dot ${tyreClass}">${tyreLabel}</span>` : "";
+
       const classColor = row.car_class_color || "#888888";
       const teamName   = row.team_name || "";
 
@@ -457,6 +471,7 @@
           ${isTeamRace ? `<td class="team-cell" title="${teamName}">${teamName}</td>` : ""}
           <td class="name-cell"      data-col="name"      >${isMe ? `<span class="you-tag">${name}</span>` : `<span>${name}</span>`}</td>
           <td class="lic-cell"       data-col="license"   >${licHtml}</td>
+          <td class="tyre-cell"      data-col="tyre"      >${tyreHtml}</td>
           <td class="gap-front-cell" data-col="gap_front" ><span class="${gapFrontCls}">${gapFront}</span></td>
           <td class="gap-cell"       data-col="gap_lead"  ><span class="${gapLeadCls}">${gapLead}</span></td>
           <td class="fast-cell${isClassBest ? " fast-global" : ""}" data-col="best_lap">${bestLap}</td>
@@ -468,10 +483,10 @@
         </tr>`;
     }
 
-    // ── Render ────────────────────────────────────────
+    // â”€â”€ Render â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     function renderStandings(list) {
       if (!Array.isArray(list) || !list.length) {
-        tbody.innerHTML = `<tr class="empty-row"><td colspan="9">Warte auf iRacing&hellip;</td></tr>`;
+        tbody.innerHTML = `<tr class="empty-row"><td colspan="99">Warte auf iRacing&hellip;</td></tr>`;
         return;
       }
 
@@ -523,7 +538,7 @@
           const displayName = CLASS_LABEL[rawName] || CLASS_LABEL[rawName.replace(/\s/g, "")] || cls.name;
           rowsHtml.push(`
             <tr class="class-header-row">
-              <td colspan="9" style="background:linear-gradient(90deg,${c}33 0%,transparent 70%);border-left:3px solid ${c};border-bottom:1px solid ${c}55;">
+              <td colspan="99" style="background:linear-gradient(90deg,${c}33 0%,transparent 70%);border-left:3px solid ${c};border-bottom:1px solid ${c}55;">
                 <span class="class-name" style="color:${c};">${displayName}</span>
                 ${cls.sof != null ? `<span class="class-sof">SOF ${cls.sof}</span>` : ""}
                 <span class="class-count">${classRows.length} Cars</span>
@@ -544,7 +559,7 @@
           const end    = Math.min(classRows.length, meIdx + 3);
           const window = classRows.slice(start, end);
           if (window.some(r => Number(r.pos ?? 9999) > TOP_N)) {
-            rowsHtml.push(`<tr class="separator-row"><td colspan="9"></td></tr>`);
+            rowsHtml.push(`<tr class="separator-row"><td colspan="99"></td></tr>`);
           }
           for (const r of window) {
             if (!seen.has(r.car_idx)) { seen.add(r.car_idx); viewRows.push(r); }
@@ -568,9 +583,10 @@
       }
 
       tbody.innerHTML = rowsHtml.join("");
+      if (_colOrder.length) window.setColumnOrder(_colOrder);
     }
 
-    // ── Session info ──────────────────────────────────
+    // â”€â”€ Session info â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     function shortSessionType(type) {
       if (!type) return "-";
       const t = String(type).toLowerCase();
@@ -630,7 +646,7 @@
       }
     }
 
-    // ── Sichtbarkeits-Modus ──────────────────────────
+    // â”€â”€ Sichtbarkeits-Modus â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     window._visibilityMode = 'race_and_replay';
     window.setVisibilityMode = function(mode) { window._visibilityMode = mode; };
     function _shouldShow(connected, isReplay) {
@@ -643,7 +659,7 @@
       return true;
     }
 
-    // ── Spalten ein-/ausblenden ───────────────────────
+    // â”€â”€ Spalten ein-/ausblenden â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     let _colStyle = null;
     window.setColumns = function(cfg) {
       if (!_colStyle) {
@@ -658,7 +674,27 @@
       _colStyle.textContent = css;
     };
 
-    // ── WebSocket ─────────────────────────────────────
+    let _colOrder = [];
+    window.setColumnOrder = function(order) {
+      _colOrder = order;
+      // Reorder <th> elements in thead
+      const thead = document.querySelector("thead tr");
+      if (thead) {
+        order.forEach(key => {
+          const th = thead.querySelector(`[data-col="${key}"]`);
+          if (th) thead.appendChild(th);
+        });
+      }
+      // Reorder <td> elements in all existing tbody rows
+      document.querySelectorAll("tbody tr").forEach(tr => {
+        order.forEach(key => {
+          const td = tr.querySelector(`[data-col="${key}"]`);
+          if (td) tr.appendChild(td);
+        });
+      });
+    };
+
+    // â”€â”€ WebSocket â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     function connect() {
       if (socket && socket.readyState === WebSocket.OPEN) return;
       try { socket = new WebSocket(WS_URL); } catch(e) { scheduleReconnect(); return; }
@@ -675,3 +711,4 @@
   </script>
 </body>
 </html>
+
