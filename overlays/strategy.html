@@ -599,12 +599,25 @@
     updateCons(lapFuelPrev, lapFuelCurr, consLastChange && (now - consLastChange) <= 30000);
   }
 
+  // ── Sichtbarkeits-Modus ──────────────────────────
+  window._visibilityMode = 'race_and_replay';
+  window.setVisibilityMode = function(mode) { window._visibilityMode = mode; };
+  function _shouldShow(connected, isReplay) {
+    const m = window._visibilityMode || 'race_and_replay';
+    if (m === 'always') return true;
+    if (!connected) return false;
+    if (m === 'race_and_replay') return true;
+    if (m === 'race')   return !isReplay;
+    if (m === 'replay') return !!isReplay;
+    return true;
+  }
+
   // ── WebSocket ─────────────────────────────────────────────────────
   function connect() {
     if (OFFLINE_MODE || (socket && socket.readyState === WebSocket.OPEN)) return;
     try { socket = new WebSocket(WS_URL); } catch(e) { scheduleReconnect(); return; }
     socket.onopen    = () => console.log("Strategy WS connected");
-    socket.onmessage = e => { try { const d = JSON.parse(e.data); document.body.style.visibility = d.connected ? 'visible' : 'hidden'; if (window.__applyCardBgAlpha) window.__applyCardBgAlpha(d.card_bg_alpha); apply(d); } catch(ex) { console.error(ex); } };
+    socket.onmessage = e => { try { const d = JSON.parse(e.data); document.body.style.visibility = _shouldShow(d.connected, d.is_replay) ? 'visible' : 'hidden'; if (window.__applyCardBgAlpha) window.__applyCardBgAlpha(d.card_bg_alpha); apply(d); } catch(ex) { console.error(ex); } };
     socket.onclose   = () => scheduleReconnect();
     socket.onerror   = e => console.error(e);
   }

@@ -114,15 +114,19 @@
     }
 
     /* Column widths */
-    th.pos       { width: 34px; text-align: right; }
-    th.car       { width: 34px; text-align: right; }
-    th.brand     { width: 34px; text-align: center; }
-    th.name      { }
-    th.lic       { width: 76px; text-align: center; }
-    th.gap-front { width: 52px; text-align: right; }
-    th.gap-lead  { width: 62px; text-align: right; }
-    th.fast      { width: 76px; text-align: right; }
-    th.last      { width: 76px; text-align: right; }
+    th.pos        { width: 34px;  text-align: right; }
+    th.car        { width: 34px;  text-align: right; }
+    th.brand      { width: 34px;  text-align: center; }
+    th.name       { min-width: 80px; }
+    th.lic        { width: 76px;  text-align: center; }
+    th.gap-front  { width: 52px;  text-align: right; }
+    th.gap-lead   { width: 62px;  text-align: right; }
+    th.fast       { width: 72px;  text-align: right; }
+    th.last       { width: 72px;  text-align: right; }
+    th.pit-stops  { width: 38px;  text-align: right; }
+    th.pit-stint  { width: 42px;  text-align: right; }
+    th.pit-time   { width: 46px;  text-align: right; }
+    th.pit-status { width: 44px;  text-align: center; }
 
     /* Rows */
     tbody tr {
@@ -257,16 +261,20 @@
       <table>
         <thead>
           <tr>
-            <th class="pos">Pos</th>
-            <th class="car">#</th>
-            <th class="brand"></th>
-            <th class="team" id="th-team" style="display:none">Team</th>
-            <th class="name">Driver</th>
-            <th class="lic">Lic / IR</th>
-            <th class="gap-front">Int</th>
-            <th class="gap-lead">Gap</th>
-            <th class="fast">Best</th>
-            <th class="last">Last</th>
+            <th class="pos"       data-col="pos">Pos</th>
+            <th class="car"       data-col="car_number">#</th>
+            <th class="brand"     data-col="car_logo"></th>
+            <th class="team"      id="th-team" style="display:none">Team</th>
+            <th class="name"      data-col="name">Driver</th>
+            <th class="lic"       data-col="license">Lic / IR</th>
+            <th class="gap-front" data-col="gap_front">Int</th>
+            <th class="gap-lead"  data-col="gap_lead">Gap</th>
+            <th class="fast"      data-col="best_lap">Best</th>
+            <th class="last"      data-col="last_lap">Last</th>
+            <th class="pit-stops" data-col="pit_stops">Pts</th>
+            <th class="pit-stint" data-col="stint_laps">Stint</th>
+            <th class="pit-time"  data-col="pit_time">Pit T.</th>
+            <th class="pit-status"data-col="pit_status">●</th>
           </tr>
         </thead>
         <tbody id="standings-body">
@@ -436,18 +444,27 @@
       const classColor = row.car_class_color || "#888888";
       const teamName   = row.team_name || "";
 
+      const pitStops  = row.pit_stops  != null ? row.pit_stops  : "--";
+      const stintLaps = row.stint_laps != null ? row.stint_laps : "--";
+      const pitTime   = row.pit_time   != null ? Math.round(row.pit_time) + "s" : "--";
+      const onPit     = row.pit_status === "pit" ? `<span style="color:#fde047;font-weight:700;">P</span>` : "";
+
       return `
         <tr class="${isMe ? "me-row" : ""}">
-          <td class="pos-cell" style="border-left:3px solid ${classColor};padding-left:6px;">${pos}</td>
-          <td class="car-cell">${carNum}</td>
-          <td class="brand-cell">${carMark(brand)}</td>
+          <td class="pos-cell"       data-col="pos"        style="border-left:3px solid ${classColor};padding-left:6px;">${pos}</td>
+          <td class="car-cell"       data-col="car_number">${carNum}</td>
+          <td class="brand-cell"     data-col="car_logo"  >${carMark(brand)}</td>
           ${isTeamRace ? `<td class="team-cell" title="${teamName}">${teamName}</td>` : ""}
-          <td class="name-cell">${isMe ? `<span class="you-tag">${name}</span>` : `<span>${name}</span>`}</td>
-          <td class="lic-cell">${licHtml}</td>
-          <td class="gap-front-cell"><span class="${gapFrontCls}">${gapFront}</span></td>
-          <td class="gap-cell"><span class="${gapLeadCls}">${gapLead}</span></td>
-          <td class="fast-cell${isClassBest ? " fast-global" : ""}">${bestLap}</td>
-          <td class="last-cell">${lastLap}</td>
+          <td class="name-cell"      data-col="name"      >${isMe ? `<span class="you-tag">${name}</span>` : `<span>${name}</span>`}</td>
+          <td class="lic-cell"       data-col="license"   >${licHtml}</td>
+          <td class="gap-front-cell" data-col="gap_front" ><span class="${gapFrontCls}">${gapFront}</span></td>
+          <td class="gap-cell"       data-col="gap_lead"  ><span class="${gapLeadCls}">${gapLead}</span></td>
+          <td class="fast-cell${isClassBest ? " fast-global" : ""}" data-col="best_lap">${bestLap}</td>
+          <td class="last-cell"      data-col="last_lap"  >${lastLap}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;" data-col="pit_stops" >${pitStops}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;" data-col="stint_laps">${stintLaps}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;" data-col="pit_time"  >${pitTime}</td>
+          <td style="text-align:center;"                                  data-col="pit_status">${onPit}</td>
         </tr>`;
     }
 
@@ -605,13 +622,41 @@
         }
         if (timeEl) timeEl.textContent = Number.isFinite(carCount) ? "Cars: " + carCount : "Cars: -";
 
-        document.body.style.visibility = payload.connected ? 'visible' : 'hidden';
+        document.body.style.visibility = _shouldShow(payload.connected, payload.is_replay) ? 'visible' : 'hidden';
         if (!payload.connected) { renderStandings([]); return; }
         renderStandings(standings);
       } catch (e) {
         console.error("WS parse error:", e);
       }
     }
+
+    // ── Sichtbarkeits-Modus ──────────────────────────
+    window._visibilityMode = 'race_and_replay';
+    window.setVisibilityMode = function(mode) { window._visibilityMode = mode; };
+    function _shouldShow(connected, isReplay) {
+      const m = window._visibilityMode || 'race_and_replay';
+      if (m === 'always') return true;
+      if (!connected) return false;
+      if (m === 'race_and_replay') return true;
+      if (m === 'race')   return !isReplay;
+      if (m === 'replay') return !!isReplay;
+      return true;
+    }
+
+    // ── Spalten ein-/ausblenden ───────────────────────
+    let _colStyle = null;
+    window.setColumns = function(cfg) {
+      if (!_colStyle) {
+        _colStyle = document.createElement("style");
+        _colStyle.id = "col-visibility";
+        document.head.appendChild(_colStyle);
+      }
+      let css = "";
+      for (const [key, visible] of Object.entries(cfg)) {
+        if (!visible) css += `[data-col="${key}"] { display: none !important; }\n`;
+      }
+      _colStyle.textContent = css;
+    };
 
     // ── WebSocket ─────────────────────────────────────
     function connect() {

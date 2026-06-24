@@ -1,6 +1,6 @@
+import json
 import os
 import sys
-import json
 import ctypes
 import threading
 
@@ -13,8 +13,9 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QCheckBox,
+    QRadioButton,
+    QButtonGroup,
     QLabel,
-    QGroupBox,
     QGridLayout,
     QSlider,
     QFrame,
@@ -26,20 +27,10 @@ from PyQt5.QtWebEngineWidgets import QWebEngineView
 # -------------------------------------------------------------
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(BASE_DIR)  # eine Ebene über "app" = Projekt-Root
+PROJECT_ROOT = os.path.dirname(BASE_DIR)
 
 
 def resource_path(*parts: str) -> str:
-    """Liefert einen Pfad, der im Dev-Modus und im PyInstaller-Build passt.
-
-    Dev:
-      PROJECT_ROOT = .../iracing-overlay
-      resource_path("overlays", "hud.html") → <root>/overlays/hud.html
-
-    Frozen (PyInstaller):
-      sys._MEIPASS = entpacktes Temp-Verzeichnis
-      resource_path("overlays", "hud.html") → <_MEIPASS>/overlays/hud.html
-    """
     if hasattr(sys, "_MEIPASS"):
         base = sys._MEIPASS  # type: ignore[attr-defined]
     else:
@@ -50,8 +41,6 @@ def resource_path(*parts: str) -> str:
 LOGO_PATH = resource_path("app", "idash_logo.png")
 OVERLAY_DIR = resource_path("overlays")
 
-# Layout-Datei: im Dev-Modus neben overlay_manager.py, im Build in einem
-# User-spezifischen Config-Ordner (damit wir auf die Platte schreiben dürfen).
 if hasattr(sys, "_MEIPASS"):
     CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".idash_overlay")
     os.makedirs(CONFIG_DIR, exist_ok=True)
@@ -59,14 +48,49 @@ if hasattr(sys, "_MEIPASS"):
 else:
     LAYOUT_PATH = os.path.join(BASE_DIR, "overlay_layout.json")
 
+# -------------------------------------------------------------
+# Spalten-Definitionen: (key, label, default_visible)
+# -------------------------------------------------------------
+
+COLUMN_DEFS = {
+    "standings": [
+        ("pos",        "Pos",       True),
+        ("car_number", "Car #",     True),
+        ("car_logo",   "Logo",      True),
+        ("name",       "Driver",    True),
+        ("license",    "Lic / IR",  True),
+        ("gap_front",  "Int",       True),
+        ("gap_lead",   "Gap",       True),
+        ("best_lap",   "Best",      True),
+        ("last_lap",   "Last",      True),
+        ("pit_stops",  "Stops",     False),
+        ("stint_laps", "Stint",     False),
+        ("pit_time",   "Pit T.",    False),
+        ("pit_status", "Status",    False),
+    ],
+    "relative": [
+        ("pos",        "Pos",       True),
+        ("car_number", "Car #",     True),
+        ("name",       "Driver",    True),
+        ("tyre",       "Tyre",      True),
+        ("car_class",  "Class",     True),
+        ("gap",        "Gap",       True),
+        ("delta",      "Delta",     False),
+        ("best_lap",   "Best",      False),
+        ("last_lap",   "Last",      False),
+        ("pit_stops",  "Stops",     False),
+        ("stint_laps", "Stint",     False),
+        ("pit_time",   "Pit T.",    False),
+        ("pit_status", "Status",    False),
+    ],
+}
 
 # -------------------------------------------------------------
 # Telemetry-Server als Hintergrund-Thread starten
 # -------------------------------------------------------------
+
 def _launch_telemetry_server():
     try:
-        # Replay-Modus: statt Live-Server eine Aufnahme abspielen (ENV gesetzt
-        # von der "iDash (Replay)"-Run-Config). GUI/Overlays bleiben identisch.
         if os.environ.get("IDASH_REPLAY"):
             import replay_server
             print("Starte im REPLAY-Modus (kein iRacing nötig).")
@@ -109,7 +133,6 @@ QLabel#HeaderSubtitleLabel {
     text-transform: uppercase;
 }
 
-/* Section header labels */
 QLabel#SectionLabel {
     color: #374151;
     font-size: 7pt;
@@ -127,7 +150,6 @@ QFrame#Divider {
     margin: 2px 0;
 }
 
-/* Overlay toggle buttons — compact tiles */
 QPushButton#OverlayBtn {
     background-color: rgba(255,255,255,0.04);
     border: 1px solid rgba(255,255,255,0.07);
@@ -157,7 +179,6 @@ QPushButton#OverlayBtn[checkable=true]:checked:hover {
     background-color: rgba(59,130,246,0.25);
 }
 
-/* Settings controls */
 QCheckBox { spacing: 8px; color: #9CA3AF; font-size: 9pt; }
 QCheckBox::indicator {
     width: 14px;
@@ -171,6 +192,20 @@ QCheckBox::indicator:checked {
     border-color: #3B82F6;
 }
 QCheckBox:hover { color: #E5E7EB; }
+
+QRadioButton { spacing: 8px; color: #9CA3AF; font-size: 9pt; }
+QRadioButton::indicator {
+    width: 13px;
+    height: 13px;
+    border: 1px solid rgba(255,255,255,0.15);
+    background-color: rgba(255,255,255,0.03);
+    border-radius: 7px;
+}
+QRadioButton::indicator:checked {
+    background-color: #3B82F6;
+    border-color: #3B82F6;
+}
+QRadioButton:hover { color: #E5E7EB; }
 
 QSlider::groove:horizontal {
     height: 3px;
@@ -197,7 +232,6 @@ QSlider::handle:horizontal {
 QLabel#OpacityLabel { color: #4B5563; font-size: 8pt; }
 QLabel#OpacityValue { color: #6B7280; font-size: 8pt; font-weight: 600; min-width: 28px; }
 
-/* Tools / CTA button */
 QPushButton#ComparerBtn {
     background-color: rgba(232,72,50,0.12);
     border: 1px solid rgba(232,72,50,0.30);
@@ -240,7 +274,6 @@ QPushButton#BtnClose:hover {
 }
 """
 
-
 # --- Win32 Click-Through Helper ---
 if sys.platform == "win32":
     user32 = ctypes.windll.user32
@@ -263,6 +296,199 @@ else:
         return
 
 
+# =============================================================
+# OverlayConfigWindow — separates Config-Fenster pro Overlay
+# =============================================================
+
+class OverlayConfigWindow(QWidget):
+    def __init__(self, overlay_key: str, title: str, manager: "OverlayManager"):
+        super().__init__()
+        self.overlay_key = overlay_key
+        self.overlay_title = title
+        self.manager = manager
+        self._col_checkboxes: dict = {}
+        self._drag_offset = None
+
+        self.setWindowTitle(f"{title} – Konfiguration")
+        self.setWindowFlags(
+            Qt.FramelessWindowHint
+            | Qt.Window
+            | Qt.WindowStaysOnTopHint
+        )
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setMinimumWidth(260)
+        self.setMaximumWidth(320)
+
+        self._build_ui()
+
+    # ------------------------------------------------------------------
+
+    def _build_ui(self):
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(8, 8, 8, 8)
+        outer.setSpacing(0)
+
+        root_panel = QFrame()
+        root_panel.setObjectName("RootPanel")
+        outer.addWidget(root_panel)
+
+        btn_close = QPushButton("✕", root_panel)
+        btn_close.setObjectName("BtnClose")
+        btn_close.clicked.connect(self.hide)
+        btn_close.raise_()
+
+        def _panel_resize(ev, _btn=btn_close, _panel=root_panel):
+            _btn.move(_panel.width() - 28, 8)
+        root_panel.resizeEvent = _panel_resize
+
+        main = QVBoxLayout(root_panel)
+        main.setContentsMargins(20, 18, 20, 20)
+        main.setSpacing(0)
+        main.setAlignment(Qt.AlignTop)
+
+        # Header
+        title_lbl = QLabel(self.overlay_title)
+        title_lbl.setObjectName("HeaderTitleLabel")
+        main.addWidget(title_lbl)
+
+        sub_lbl = QLabel("OVERLAY KONFIGURATION")
+        sub_lbl.setObjectName("HeaderSubtitleLabel")
+        main.addWidget(sub_lbl)
+        main.addSpacing(14)
+
+        main.addWidget(self._divider())
+        main.addSpacing(10)
+
+        # Visibility toggle
+        main.addWidget(self._section("SICHTBARKEIT"))
+        main.addSpacing(6)
+
+        self.chk_visible = QCheckBox("Overlay anzeigen")
+        vis = self.manager.layout_state.get("visible", {}).get(self.overlay_key, False)
+        self.chk_visible.setChecked(vis)
+        self.chk_visible.stateChanged.connect(self._on_visibility_changed)
+        main.addWidget(self.chk_visible)
+        main.addSpacing(12)
+        main.addWidget(self._divider())
+        main.addSpacing(10)
+
+        # Visibility mode
+        main.addWidget(self._section("ANZEIGEN WENN"))
+        main.addSpacing(6)
+
+        self._mode_group = QButtonGroup(self)
+        saved_mode = self.manager.layout_state.get("visibility_mode", {}).get(
+            self.overlay_key, "race_and_replay"
+        )
+        for mode_key, mode_label in [
+            ("always",          "Immer"),
+            ("race_and_replay", "Rennen & Replay"),
+            ("race",            "Nur Rennen"),
+            ("replay",          "Nur Replay"),
+        ]:
+            rb = QRadioButton(mode_label)
+            rb.setChecked(mode_key == saved_mode)
+            rb.toggled.connect(lambda checked, k=mode_key: self._on_mode_changed(k, checked))
+            self._mode_group.addButton(rb)
+            main.addWidget(rb)
+
+        # Column section (only for overlays that have column defs)
+        col_defs = COLUMN_DEFS.get(self.overlay_key, [])
+        if col_defs:
+            main.addSpacing(12)
+            main.addWidget(self._divider())
+            main.addSpacing(10)
+            main.addWidget(self._section("SPALTEN"))
+            main.addSpacing(8)
+
+            saved = self.manager.layout_state.get("columns", {}).get(self.overlay_key, {})
+
+            grid = QGridLayout()
+            grid.setSpacing(2)
+            grid.setColumnStretch(0, 1)
+            grid.setColumnStretch(1, 1)
+
+            for i, (key, label, default) in enumerate(col_defs):
+                chk = QCheckBox(label)
+                chk.setChecked(saved.get(key, default))
+                chk.stateChanged.connect(lambda state, k=key: self._on_col_changed(k, state))
+                grid.addWidget(chk, i // 2, i % 2)
+                self._col_checkboxes[key] = chk
+
+            main.addLayout(grid)
+
+        main.addStretch()
+
+    def _divider(self) -> QFrame:
+        d = QFrame()
+        d.setObjectName("Divider")
+        d.setFrameShape(QFrame.HLine)
+        return d
+
+    def _section(self, text: str) -> QLabel:
+        lbl = QLabel(text)
+        lbl.setObjectName("SectionLabel")
+        return lbl
+
+    # ------------------------------------------------------------------
+
+    def _on_visibility_changed(self, state: int):
+        visible = (state == Qt.Checked)
+        toggle_fn = getattr(self.manager, f"toggle_{self.overlay_key}", None)
+        if callable(toggle_fn):
+            toggle_fn(visible)
+
+    def _on_mode_changed(self, mode_key: str, checked: bool):
+        if not checked:
+            return
+        modes = self.manager.layout_state.setdefault("visibility_mode", {})
+        modes[self.overlay_key] = mode_key
+        self.manager._save_layout_state()
+        self.manager._push_visibility_mode_to_overlay(self.overlay_key)
+
+    def _on_col_changed(self, key: str, state: int):
+        checked = (state == Qt.Checked)
+        cols = self.manager.layout_state.setdefault("columns", {})
+        overlay_cols = cols.setdefault(self.overlay_key, {})
+        overlay_cols[key] = checked
+        self.manager._save_layout_state()
+        self.manager._push_columns_to_overlay(self.overlay_key)
+
+    def sync_visibility(self, visible: bool):
+        """Aktualisiert den Sichtbarkeits-Checkbox ohne Signal auszulösen."""
+        self.chk_visible.blockSignals(True)
+        self.chk_visible.setChecked(visible)
+        self.chk_visible.blockSignals(False)
+
+    # ------------------------------------------------------------------
+    # Dragging
+    # ------------------------------------------------------------------
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_offset = event.globalPos() - self.frameGeometry().topLeft()
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._drag_offset is not None and (event.buttons() & Qt.LeftButton):
+            self.move(event.globalPos() - self._drag_offset)
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_offset = None
+            event.accept()
+        else:
+            super().mouseReleaseEvent(event)
+
+
+# =============================================================
+# OverlayWindow
+# =============================================================
 
 class OverlayWindow(QWidget):
     def set_content_opacity(self, opacity: float):
@@ -282,6 +508,7 @@ class OverlayWindow(QWidget):
         self.edit_mode = False
         self._drag_offset = None
         self._on_drag_end = None
+        self._on_load_extra = None  # optional callback after page load
 
         self.setWindowTitle(title)
         self.setWindowFlags(
@@ -314,8 +541,6 @@ class OverlayWindow(QWidget):
         self.webview.page().contentsSizeChanged.connect(self._on_contents_size_changed)
 
     def _on_contents_size_changed(self, size):
-        """Passt das Fenster an den tatsächlichen HTML-Inhalt an.
-        So ist die greifbare Fläche im Bearbeitungsmodus genau so groß wie der Overlay."""
         w = int(size.width())
         h = int(size.height())
         if w > 10 and h > 10:
@@ -324,6 +549,8 @@ class OverlayWindow(QWidget):
     def _on_load_finished(self, ok: bool):
         if ok:
             self._apply_js_edit_mode()
+            if callable(self._on_load_extra):
+                self._on_load_extra()
 
     def _apply_js_edit_mode(self):
         if not self.webview:
@@ -388,6 +615,10 @@ class OverlayWindow(QWidget):
             super().mouseReleaseEvent(event)
 
 
+# =============================================================
+# OverlayManager
+# =============================================================
+
 class OverlayManager(QWidget):
     def __init__(self):
         super().__init__()
@@ -397,13 +628,9 @@ class OverlayManager(QWidget):
         self.setMaximumWidth(360)
         self.setWindowIcon(QIcon(LOGO_PATH))
 
-        # rahmenlos + transparenter Hintergrund, damit RootPanel rund sein kann
-        self.setWindowFlags(
-            Qt.FramelessWindowHint
-            | Qt.Window
-        )
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
-        self._drag_offset = None  # zum Verschieben des Fensters
+        self._drag_offset = None
 
         self.hud_overlay = None
         self.relative_overlay = None
@@ -413,41 +640,91 @@ class OverlayManager(QWidget):
         self.circle_overlay = None
         self.comparer_window = None
 
+        self._config_windows: dict = {}
+
         self.current_opacity = 0.9
 
         self.layout_path = LAYOUT_PATH
         self.layout_state = self._load_layout_state()
 
-        # Gespeicherte Deckkraft wiederherstellen
         saved_opacity = self.layout_state.get("opacity")
         if isinstance(saved_opacity, (int, float)):
             self.current_opacity = max(0.0, min(float(saved_opacity), 1.0))
 
         self._build_ui()
 
-        # Zuletzt geöffnete Overlays wiederherstellen
         from PyQt5.QtCore import QTimer
         QTimer.singleShot(300, self._restore_visible_overlays)
+
+    # ------------------------------------------------------------------
+    # Overlay-Config-Fenster öffnen / Spalten pushen
+    # ------------------------------------------------------------------
+
+    def _open_overlay_config(self, key: str, title: str):
+        # Button-Zustand auf tatsächlichen Sichtbarkeitszustand zurücksetzen
+        # (Qt hat ihn durch den Klick schon umgeschaltet)
+        actual = self.layout_state.get("visible", {}).get(key, False)
+        btn = getattr(self, f"btn_{key}", None)
+        if btn:
+            btn.setChecked(actual)
+
+        if key not in self._config_windows:
+            win = OverlayConfigWindow(key, title, self)
+            win.setStyleSheet(QSS_STYLE)
+            self._config_windows[key] = win
+
+        win = self._config_windows[key]
+        if not win.isVisible():
+            mgr_geo = self.frameGeometry()
+            win.move(mgr_geo.right() + 10, mgr_geo.top())
+        win.show()
+        win.raise_()
+        win.activateWindow()
+
+    def _push_columns_to_overlay(self, key: str):
+        """Schickt aktuelle Spalten-Config per JS ans Overlay."""
+        win = getattr(self, f"{key}_overlay", None)
+        if not win or not getattr(win, "webview", None):
+            return
+        defs = COLUMN_DEFS.get(key, [])
+        if not defs:
+            return
+        saved = self.layout_state.get("columns", {}).get(key, {})
+        cfg = {col_key: saved.get(col_key, default) for col_key, _, default in defs}
+        js = f"if (window.setColumns) window.setColumns({json.dumps(cfg)});"
+        win.webview.page().runJavaScript(js)
+
+    def _push_visibility_mode_to_overlay(self, key: str):
+        """Schickt den Sichtbarkeits-Modus per JS ans Overlay."""
+        win = getattr(self, f"{key}_overlay", None)
+        if not win or not getattr(win, "webview", None):
+            return
+        mode = self.layout_state.get("visibility_mode", {}).get(key, "race_and_replay")
+        js = f"if (window.setVisibilityMode) window.setVisibilityMode('{mode}');"
+        win.webview.page().runJavaScript(js)
+
+    def _on_overlay_loaded(self, key: str):
+        """Wird nach dem Laden einer Overlay-Seite aufgerufen."""
+        self._push_columns_to_overlay(key)
+        self._push_visibility_mode_to_overlay(key)
+
+    # ------------------------------------------------------------------
+    # Restore
+    # ------------------------------------------------------------------
 
     def _restore_visible_overlays(self):
         vis = self.layout_state.get("visible", {})
         if vis.get("hud"):
-            self.btn_hud.setChecked(True)
             self.toggle_hud(True)
         if vis.get("relative"):
-            self.btn_relative.setChecked(True)
             self.toggle_relative(True)
         if vis.get("standings"):
-            self.btn_standings.setChecked(True)
             self.toggle_standings(True)
         if vis.get("wind"):
-            self.btn_wind.setChecked(True)
             self.toggle_wind(True)
         if vis.get("strategy"):
-            self.btn_strategy.setChecked(True)
             self.toggle_strategy(True)
         if vis.get("circle"):
-            self.btn_circle.setChecked(True)
             self.toggle_circle(True)
 
     def _set_visible(self, key: str, value: bool):
@@ -455,8 +732,17 @@ class OverlayManager(QWidget):
             self.layout_state["visible"] = {}
         self.layout_state["visible"][key] = value
         self._save_layout_state()
+        # Button-Zustand synchronisieren
+        btn = getattr(self, f"btn_{key}", None)
+        if btn:
+            btn.setChecked(value)
+        # Config-Fenster synchronisieren (falls offen)
+        if key in self._config_windows:
+            self._config_windows[key].sync_visibility(value)
 
-    # ------------ Layout-Persistenz ------------
+    # ------------------------------------------------------------------
+    # Layout-Persistenz
+    # ------------------------------------------------------------------
 
     def _load_layout_state(self):
         try:
@@ -505,7 +791,9 @@ class OverlayManager(QWidget):
         }
         self._save_layout_state()
 
-    # ------------ UI ------------
+    # ------------------------------------------------------------------
+    # UI
+    # ------------------------------------------------------------------
 
     def _make_section_label(self, text: str) -> QLabel:
         lbl = QLabel(text)
@@ -533,7 +821,6 @@ class OverlayManager(QWidget):
         root_panel.setObjectName("RootPanel")
         outer.addWidget(root_panel)
 
-        # X-Button oben rechts (absolut positioniert)
         btn_close = QPushButton("✕", root_panel)
         btn_close.setObjectName("BtnClose")
         btn_close.clicked.connect(QApplication.instance().quit)
@@ -564,7 +851,6 @@ class OverlayManager(QWidget):
         main_layout.addWidget(header_sub)
         main_layout.addSpacing(16)
 
-        # ── Divider ──────────────────────────────────────────
         main_layout.addWidget(self._make_divider())
         main_layout.addSpacing(12)
 
@@ -578,33 +864,44 @@ class OverlayManager(QWidget):
         grid.setColumnStretch(1, 1)
 
         self.btn_standings = self._make_overlay_btn("Standings")
-        self.btn_standings.clicked.connect(self.toggle_standings)
+        self.btn_standings.clicked.connect(
+            lambda: self._open_overlay_config("standings", "Standings")
+        )
         grid.addWidget(self.btn_standings, 0, 0)
 
         self.btn_relative = self._make_overlay_btn("Relative")
-        self.btn_relative.clicked.connect(self.toggle_relative)
+        self.btn_relative.clicked.connect(
+            lambda: self._open_overlay_config("relative", "Relative")
+        )
         grid.addWidget(self.btn_relative, 0, 1)
 
         self.btn_wind = self._make_overlay_btn("Wind / Env")
-        self.btn_wind.clicked.connect(self.toggle_wind)
+        self.btn_wind.clicked.connect(
+            lambda: self._open_overlay_config("wind", "Wind / Env")
+        )
         grid.addWidget(self.btn_wind, 1, 0)
 
         self.btn_hud = self._make_overlay_btn("HUD")
-        self.btn_hud.clicked.connect(self.toggle_hud)
+        self.btn_hud.clicked.connect(
+            lambda: self._open_overlay_config("hud", "HUD")
+        )
         grid.addWidget(self.btn_hud, 1, 1)
 
         self.btn_strategy = self._make_overlay_btn("Strategy / Fuel")
-        self.btn_strategy.clicked.connect(self.toggle_strategy)
+        self.btn_strategy.clicked.connect(
+            lambda: self._open_overlay_config("strategy", "Strategy / Fuel")
+        )
         grid.addWidget(self.btn_strategy, 2, 0)
 
         self.btn_circle = self._make_overlay_btn("Circle of Doom")
-        self.btn_circle.clicked.connect(self.toggle_circle)
+        self.btn_circle.clicked.connect(
+            lambda: self._open_overlay_config("circle", "Circle of Doom")
+        )
         grid.addWidget(self.btn_circle, 2, 1)
 
         main_layout.addLayout(grid)
         main_layout.addSpacing(16)
 
-        # ── Divider ──────────────────────────────────────────
         main_layout.addWidget(self._make_divider())
         main_layout.addSpacing(12)
 
@@ -643,7 +940,6 @@ class OverlayManager(QWidget):
         main_layout.addLayout(opacity_row)
         main_layout.addSpacing(16)
 
-        # ── Divider ──────────────────────────────────────────
         main_layout.addWidget(self._make_divider())
         main_layout.addSpacing(12)
 
@@ -665,7 +961,9 @@ class OverlayManager(QWidget):
 
         main_layout.addStretch()
 
-    # ------------ Window Dragging (über leere Bereiche des RootPanels) ------------
+    # ------------------------------------------------------------------
+    # Window Dragging
+    # ------------------------------------------------------------------
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -689,7 +987,9 @@ class OverlayManager(QWidget):
         else:
             super().mouseReleaseEvent(event)
 
-    # ------------ Button-Handler ------------
+    # ------------------------------------------------------------------
+    # Toggle-Methoden (aufgerufen von OverlayConfigWindow)
+    # ------------------------------------------------------------------
 
     def toggle_hud(self, checked: bool):
         if checked:
@@ -701,6 +1001,7 @@ class OverlayManager(QWidget):
                 self.hud_overlay.move(200, 200)
                 self._restore_geometry(self.hud_overlay, "hud")
                 self.hud_overlay._on_drag_end = lambda w: self._store_geometry(w, "hud")
+                self.hud_overlay._on_load_extra = lambda: self._on_overlay_loaded("hud")
                 self.hud_overlay.show()
                 self.hud_overlay.set_edit_mode(self.chk_edit.isChecked())
             else:
@@ -722,6 +1023,7 @@ class OverlayManager(QWidget):
                 self.relative_overlay.move(200, 420)
                 self._restore_geometry(self.relative_overlay, "relative")
                 self.relative_overlay._on_drag_end = lambda w: self._store_geometry(w, "relative")
+                self.relative_overlay._on_load_extra = lambda: self._on_overlay_loaded("relative")
                 self.relative_overlay.show()
                 self.relative_overlay.set_edit_mode(self.chk_edit.isChecked())
             else:
@@ -743,6 +1045,7 @@ class OverlayManager(QWidget):
                 self.standings_overlay.move(700, 200)
                 self._restore_geometry(self.standings_overlay, "standings")
                 self.standings_overlay._on_drag_end = lambda w: self._store_geometry(w, "standings")
+                self.standings_overlay._on_load_extra = lambda: self._on_overlay_loaded("standings")
                 self.standings_overlay.show()
                 self.standings_overlay.set_edit_mode(self.chk_edit.isChecked())
             else:
@@ -764,6 +1067,7 @@ class OverlayManager(QWidget):
                 self.wind_overlay.move(700, 420)
                 self._restore_geometry(self.wind_overlay, "wind")
                 self.wind_overlay._on_drag_end = lambda w: self._store_geometry(w, "wind")
+                self.wind_overlay._on_load_extra = lambda: self._on_overlay_loaded("wind")
                 self.wind_overlay.show()
                 self.wind_overlay.set_edit_mode(self.chk_edit.isChecked())
             else:
@@ -785,6 +1089,7 @@ class OverlayManager(QWidget):
                 self.strategy_overlay.move(700, 640)
                 self._restore_geometry(self.strategy_overlay, "strategy")
                 self.strategy_overlay._on_drag_end = lambda w: self._store_geometry(w, "strategy")
+                self.strategy_overlay._on_load_extra = lambda: self._on_overlay_loaded("strategy")
                 self.strategy_overlay.show()
                 self.strategy_overlay.set_edit_mode(self.chk_edit.isChecked())
             else:
@@ -806,6 +1111,7 @@ class OverlayManager(QWidget):
                 self.circle_overlay.move(900, 160)
                 self._restore_geometry(self.circle_overlay, "circle")
                 self.circle_overlay._on_drag_end = lambda w: self._store_geometry(w, "circle")
+                self.circle_overlay._on_load_extra = lambda: self._on_overlay_loaded("circle")
                 self.circle_overlay.show()
                 self.circle_overlay.set_edit_mode(self.chk_edit.isChecked())
             else:
@@ -843,11 +1149,11 @@ class OverlayManager(QWidget):
         self.comparer_window.raise_()
         self.comparer_window.activateWindow()
 
-    # ------------ Pit-Kalibrierung ------------
+    # ------------------------------------------------------------------
+    # Pit-Kalibrierung
+    # ------------------------------------------------------------------
 
     def _send_pit_cmd(self, action: str):
-        """Schreibt ein Kalibrier-Kommando in overlay_layout.json; der
-        Telemetry-Server pollt es und steuert die State-Machine."""
         nonce = int(self.layout_state.get("_pit_cmd_nonce", 0)) + 1
         self.layout_state["_pit_cmd_nonce"] = nonce
         self.layout_state["pit_cal_cmd"] = {"action": action, "nonce": nonce}
@@ -857,13 +1163,15 @@ class OverlayManager(QWidget):
         if checked:
             self._send_pit_cmd("start")
             self.btn_pit_cal.setText("◉  Kalibrierung läuft – stoppen")
-            # Circle-Overlay einblenden, damit die Schritt-Führung sichtbar ist
             if not self.btn_circle.isChecked():
-                self.btn_circle.setChecked(True)
                 self.toggle_circle(True)
         else:
             self._send_pit_cmd("stop")
             self.btn_pit_cal.setText("◉  Pit-Kalibrierung starten")
+
+    # ------------------------------------------------------------------
+    # Einstellungen
+    # ------------------------------------------------------------------
 
     def on_edit_mode_changed(self, state: int):
         enabled = state == Qt.Checked
@@ -896,25 +1204,22 @@ class OverlayManager(QWidget):
                 win.set_content_opacity(opacity)
 
     def closeEvent(self, event):
-        if self.hud_overlay:
-            self._store_geometry(self.hud_overlay, "hud")
-        if self.relative_overlay:
-            self._store_geometry(self.relative_overlay, "relative")
-        if self.standings_overlay:
-            self._store_geometry(self.standings_overlay, "standings")
-        if self.wind_overlay:
-            self._store_geometry(self.wind_overlay, "wind")
-        if self.strategy_overlay:
-            self._store_geometry(self.strategy_overlay, "strategy")
-        if self.circle_overlay:
-            self._store_geometry(self.circle_overlay, "circle")
+        for key, attr in [
+            ("hud", self.hud_overlay),
+            ("relative", self.relative_overlay),
+            ("standings", self.standings_overlay),
+            ("wind", self.wind_overlay),
+            ("strategy", self.strategy_overlay),
+            ("circle", self.circle_overlay),
+        ]:
+            if attr:
+                self._store_geometry(attr, key)
         super().closeEvent(event)
 
 
 def main():
-    # Windows DPI awareness must be set before any Qt/Chromium init
     try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PROCESS_PER_MONITOR_DPI_AWARE
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
     except Exception:
         try:
             ctypes.windll.user32.SetProcessDPIAware()
@@ -923,7 +1228,11 @@ def main():
 
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
-    os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--force-device-scale-factor=1")
+    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
+        os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "--force-device-scale-factor=1")
+        + " --disable-gpu --no-sandbox"
+    )
+    os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
     app = QApplication(sys.argv)
     app.setWindowIcon(QIcon(LOGO_PATH))
     app.setStyleSheet(QSS_STYLE)

@@ -103,12 +103,19 @@
     padding: 5px 6px 4px;
   }
 
-  th.pos  { width: 38px; text-align: right; }
-  th.car  { width: 42px; text-align: right; }
-  th.name { width: 160px; }
-  th.tyre { width: 40px; text-align: center; }
-  th.cls  { width: 110px; text-align: right; }
-  th.gap  { width: 60px; text-align: right; }
+  th.pos        { width: 38px;  text-align: right; }
+  th.car        { width: 42px;  text-align: right; }
+  th.name       { min-width: 80px; }
+  th.tyre       { width: 40px;  text-align: center; }
+  th.cls        { width: 110px; text-align: right; }
+  th.gap        { width: 60px;  text-align: right; }
+  th.delta      { width: 58px;  text-align: right; }
+  th.best-lap   { width: 72px;  text-align: right; }
+  th.last-lap   { width: 72px;  text-align: right; }
+  th.pit-stops  { width: 38px;  text-align: right; }
+  th.pit-stint  { width: 42px;  text-align: right; }
+  th.pit-time   { width: 46px;  text-align: right; }
+  th.pit-status { width: 44px;  text-align: center; }
 
   tbody tr {
     border-bottom: 1px solid rgba(255,255,255,0.05);
@@ -364,12 +371,19 @@
         <table>
           <thead>
             <tr>
-              <th class="pos">POS</th>
-              <th class="car">CAR#</th>
-              <th class="name">NAME</th>
-              <th class="tyre">TYRE</th>
-              <th class="cls">CAR</th>
-              <th class="gap">INT</th>
+              <th class="pos"        data-col="pos">POS</th>
+              <th class="car"        data-col="car_number">CAR#</th>
+              <th class="name"       data-col="name">NAME</th>
+              <th class="tyre"       data-col="tyre">TYRE</th>
+              <th class="cls"        data-col="car_class">CAR</th>
+              <th class="gap"        data-col="gap">INT</th>
+              <th class="delta"      data-col="delta">DELTA</th>
+              <th class="best-lap"   data-col="best_lap">BEST</th>
+              <th class="last-lap"   data-col="last_lap">LAST</th>
+              <th class="pit-stops"  data-col="pit_stops">PTS</th>
+              <th class="pit-stint"  data-col="stint_laps">STINT</th>
+              <th class="pit-time"   data-col="pit_time">PIT T.</th>
+              <th class="pit-status" data-col="pit_status">●</th>
             </tr>
           </thead>
           <tbody id="relative-body">
@@ -636,14 +650,28 @@
         const nameHtml = isMe
           ? `<span class="you-tag">${displayName}</span>`
           : `<span>${displayName}</span>`;
+        const pitStops  = row.pit_stops  != null ? row.pit_stops  : "--";
+        const stintLaps = row.stint_laps != null ? row.stint_laps : "--";
+        const pitTime   = row.pit_time   != null ? Math.round(row.pit_time) + "s" : "--";
+        const onPit     = row.pit_status === "pit" ? `<span style="color:#fde047;font-weight:700;">P</span>` : "";
+        const lastLapFmt = row.last_lap > 0 ? formatLapTime(row.last_lap) : "--:--";
+        const bestLapFmt = row.best_lap > 0 ? formatLapTime(row.best_lap) : "--:--";
+
         return `
           <tr class="${isMe ? "me-row" : ""}" ${lapBg ? `style="background:${lapBg};"` : ""}>
-            <td class="pos-cell" style="border-left:3px solid ${classColor};padding-left:6px;">${pos}</td>
-            <td class="car-cell">${carNum}</td>
-            <td class="name-cell">${nameHtml}</td>
-            <td class="tyre-cell">${tyreClass ? `<span class="tyre-dot ${tyreClass}">${tyreLabel}</span>` : ""}</td>
-            <td class="cls-cell" title="${classFull}">${carMark(brand, classFull, classColor)}</td>
-            <td class="gap-cell"><span>${gapDisplay}</span></td>
+            <td class="pos-cell"  data-col="pos"        style="border-left:3px solid ${classColor};padding-left:6px;">${pos}</td>
+            <td class="car-cell"  data-col="car_number">${carNum}</td>
+            <td class="name-cell" data-col="name"       >${nameHtml}</td>
+            <td class="tyre-cell" data-col="tyre"       >${tyreClass ? `<span class="tyre-dot ${tyreClass}">${tyreLabel}</span>` : ""}</td>
+            <td class="cls-cell"  data-col="car_class"  title="${classFull}">${carMark(brand, classFull, classColor)}</td>
+            <td class="gap-cell"  data-col="gap"        ><span>${gapDisplay}</span></td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums;" data-col="delta"      >${row.delta ?? "--.-"}</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums;font-size:12px;" data-col="best_lap"   >${bestLapFmt}</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums;font-size:12px;" data-col="last_lap"   >${lastLapFmt}</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums;" data-col="pit_stops"  >${pitStops}</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums;" data-col="stint_laps" >${stintLaps}</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums;" data-col="pit_time"   >${pitTime}</td>
+            <td style="text-align:center;"                                  data-col="pit_status" >${onPit}</td>
           </tr>
         `;
       }).join("");
@@ -883,7 +911,7 @@
 
     function applyPayload(payload) {
       if (!payload || typeof payload !== "object") return;
-      document.body.style.visibility = payload.connected ? 'visible' : 'hidden';
+      document.body.style.visibility = _shouldShow(payload.connected, payload.is_replay) ? 'visible' : 'hidden';
 
       const relList = payload.relative || payload.rel || [];
       renderRelative(relList);
@@ -903,6 +931,44 @@
         console.error("Fehler beim Parsen der WebSocket-Nachricht:", e);
       }
     }
+
+    // ── Sichtbarkeits-Modus ──────────────────────────
+    window._visibilityMode = 'race_and_replay';
+    window.setVisibilityMode = function(mode) { window._visibilityMode = mode; };
+    function _shouldShow(connected, isReplay) {
+      const m = window._visibilityMode || 'race_and_replay';
+      if (m === 'always') return true;
+      if (!connected) return false;
+      if (m === 'race_and_replay') return true;
+      if (m === 'race')   return !isReplay;
+      if (m === 'replay') return !!isReplay;
+      return true;
+    }
+
+    function formatLapTime(value) {
+      const num = Number(value);
+      if (!Number.isFinite(num) || num <= 0) return "--:--";
+      const totalMs = Math.round(num * 1000);
+      const m  = Math.floor(totalMs / 60000);
+      const s  = Math.floor((totalMs % 60000) / 1000);
+      const ms = totalMs % 1000;
+      return `${m}:${String(s).padStart(2,"0")}.${String(ms).padStart(3,"0")}`;
+    }
+
+    // ── Spalten ein-/ausblenden ───────────────────────
+    let _colStyle = null;
+    window.setColumns = function(cfg) {
+      if (!_colStyle) {
+        _colStyle = document.createElement("style");
+        _colStyle.id = "col-visibility";
+        document.head.appendChild(_colStyle);
+      }
+      let css = "";
+      for (const [key, visible] of Object.entries(cfg)) {
+        if (!visible) css += `[data-col="${key}"] { display: none !important; }\n`;
+      }
+      _colStyle.textContent = css;
+    };
 
     function connect() {
       if (socket && socket.readyState === WebSocket.OPEN) return;

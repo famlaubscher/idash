@@ -442,7 +442,7 @@
             ws.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
-                    document.body.style.visibility = data.connected ? 'visible' : 'hidden';
+                    document.body.style.visibility = _shouldShow(data.connected, data.is_replay) ? 'visible' : 'hidden';
                     if (window.__applyCardBgAlpha) window.__applyCardBgAlpha(data.card_bg_alpha);
                     applyTelemetry(data);
                 } catch (e) {
@@ -496,6 +496,19 @@
                 e.preventDefault();
                 e.stopPropagation();
             });
+        }
+
+        // ── Sichtbarkeits-Modus ──────────────────────────
+        window._visibilityMode = 'race_and_replay';
+        window.setVisibilityMode = function(mode) { window._visibilityMode = mode; };
+        function _shouldShow(connected, isReplay) {
+          const m = window._visibilityMode || 'race_and_replay';
+          if (m === 'always') return true;
+          if (!connected) return false;
+          if (m === 'race_and_replay') return true;
+          if (m === 'race')   return !isReplay;
+          if (m === 'replay') return !!isReplay;
+          return true;
         }
 
         // Live-Betrieb: direkt verbinden

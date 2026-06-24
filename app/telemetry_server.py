@@ -654,6 +654,10 @@ class TelemetryServer:
                 payload = self._build_robust_payload()
                 payload["connected"] = True
                 payload["seq"] = self._seq
+                try:
+                    payload["is_replay"] = bool(self.ir["IsReplayPlaying"])
+                except Exception:
+                    payload["is_replay"] = False
 
                 # asyncio Kontrolle abgeben damit WebSocket-Handler laufen können
                 await asyncio.sleep(0)

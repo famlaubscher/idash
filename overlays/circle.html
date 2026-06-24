@@ -854,10 +854,22 @@
     const WS_URL  = `ws://${_wsHost}:8765`;
     let socket = null, reconnectTimer = null;
 
+    window._visibilityMode = 'race_and_replay';
+    window.setVisibilityMode = function(mode) { window._visibilityMode = mode; };
+    function _shouldShow(connected, isReplay) {
+      const m = window._visibilityMode || 'race_and_replay';
+      if (m === 'always') return true;
+      if (!connected) return false;
+      if (m === 'race_and_replay') return true;
+      if (m === 'race')   return !isReplay;
+      if (m === 'replay') return !!isReplay;
+      return true;
+    }
+
     function handleMessage(data) {
       try {
         const payload = JSON.parse(data);
-        document.body.style.visibility = payload.connected ? 'visible' : 'hidden';
+        document.body.style.visibility = _shouldShow(payload.connected, payload.is_replay) ? 'visible' : 'hidden';
         if (window.__applyCardBgAlpha) window.__applyCardBgAlpha(payload.card_bg_alpha);
         applyPitConfig(payload.pit_config);
         renderCircle(payload.circle, payload.strategy);
