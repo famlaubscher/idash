@@ -211,6 +211,12 @@
       font-size: 11px; font-weight: 900; letter-spacing: 0.14em;
       color: #93c5fd; text-align: center; margin-bottom: 9px;
     }
+    .cal-ref {
+      font-size: 10px; text-align: center; margin-bottom: 9px;
+      color: #94a3b8; font-variant-numeric: tabular-nums;
+    }
+    .cal-ref .cal-ref-val { color: #e2e8f0; font-weight: 700; }
+    .cal-ref.missing .cal-ref-val { color: #f87171; }
     .cal-step {
       display: flex; align-items: center; gap: 7px;
       font-size: 11px; color: #cbd5e1; margin: 5px 0;
@@ -276,6 +282,7 @@
       <!-- Kalibrier-Panel (nur im Kalibrier-Modus sichtbar) -->
       <div id="cal-panel" class="cal-panel" style="display:none">
         <div class="cal-title">PIT-KALIBRIERUNG</div>
+        <div class="cal-ref" id="cal-ref">Referenz-Runde: <span class="cal-ref-val">—</span></div>
         <div class="cal-step" id="cal-s1"><span class="cal-box"></span><span class="cal-txt">1 · Boxen-Durchfahrt (ohne Halt)</span><span class="cal-val"></span></div>
         <div class="cal-step" id="cal-s2"><span class="cal-box"></span><span class="cal-txt">2 · Tankstopp (leer → voll)</span><span class="cal-val"></span></div>
         <div class="cal-step" id="cal-s3"><span class="cal-box"></span><span class="cal-txt">3 · Reifen-only (kein Tanken)</span><span class="cal-val"></span></div>
@@ -338,6 +345,7 @@
     const centerPit = document.getElementById("center-pit");
     const calPanel  = document.getElementById("cal-panel");
     const calEvent  = document.getElementById("cal-event");
+    const calRef    = document.getElementById("cal-ref");
     const calSteps  = {
       pit_loss:  document.getElementById("cal-s1"),
       fuel_rate: document.getElementById("cal-s2"),
@@ -692,9 +700,19 @@
     }
 
     // ---- Kalibrier-Panel ----
+    function fmtLapTime(sec) {
+      if (!Number.isFinite(sec) || sec <= 0.5) return null;
+      const m = Math.floor(sec / 60);
+      const s = sec - m * 60;
+      return `${m}:${s.toFixed(3).padStart(6, "0")}`;
+    }
+
     function updateCalibration(cal) {
       if (!cal || !cal.active) { calPanel.style.display = "none"; return; }
       calPanel.style.display = "";
+      const refStr = fmtLapTime(cal.ref_lap);
+      calRef.classList.toggle("missing", !refStr);
+      calRef.querySelector(".cal-ref-val").textContent = refStr || "—";
       const fmt = { pit_loss: v => v.toFixed(1) + "s",
                     fuel_rate: v => v.toFixed(2) + " L/s",
                     tire_time: v => v.toFixed(1) + "s" };

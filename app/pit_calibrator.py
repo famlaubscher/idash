@@ -56,6 +56,11 @@ class PitCalibrator:
         self._fuel_samples = []          # (time, fuel) während des Stehens
         self._saw_stationary = False
 
+        # Arming-Gate: erst scharf, wenn das Auto die Box einmal verlassen hat
+        # UND eine Referenzrunde vorliegt (siehe feed()).
+        self._armed = False
+        self._ref_lap = None     # s — zuletzt gesehene gültige Referenzrunde
+
         # Letzte Statusmeldung fürs Overlay
         self._last_event = ""
 
@@ -74,8 +79,11 @@ class PitCalibrator:
         self.pit_loss = None
         self.fuel_rate = None
         self.tire_time = None
+        self._armed = False
+        self._ref_lap = None
+        self._prev_on_pit = False
         self._reset_visit()
-        self._last_event = "Kalibrierung gestartet"
+        self._last_event = "Kalibrierung gestartet — Box verlassen & Referenzrunde fahren"
 
     def stop(self):
         """Beendet den Lauf und speichert, was gemessen wurde."""
@@ -86,6 +94,8 @@ class PitCalibrator:
 
     def reset(self):
         self.pit_loss = self.fuel_rate = self.tire_time = None
+        self._armed = False
+        self._prev_on_pit = False
         self._reset_visit()
         self._last_event = "zurückgesetzt"
 
@@ -115,6 +125,31 @@ class PitCalibrator:
             return
 
         on_pit = bool(on_pit)
+
+        # Referenzrunde mitführen (für Anzeige, Durchfahrt-Messung und Gate).
+        if ref_lap is not None and ref_lap > 0.5:
+            self._ref_lap = float(ref_lap)
+
+        # Arming-Gate: NICHT messen, solange die Kalibrierung nicht "scharf" ist.
+        # Scharf wird sie erst, wenn das Auto auf der Strecke ist (Box mindestens
+        # einmal verlassen) UND eine gültige Referenzrunde vorliegt. Ohne dieses
+        # Gate würde ein beim Start bereits laufender Boxenbesuch (Auto steht
+        # schon in der Box) sofort fälschlich als Reifen-/Tankstopp gemessen.
+        if not self._armed:
+            if (not on_pit) and self._ref_lap is not None:
+                self._armed = True
+                self._reset_visit()
+                self._prev_on_pit = on_pit          # = False (auf Strecke)
+                self._last_ontrack_pct = pct
+                self._last_event = "Bereit — Kalibrierung scharf"
+                return
+            if not on_pit:
+                self._last_ontrack_pct = pct
+                self._last_event = "Warte auf Referenzrunde…"
+            else:
+                self._last_event = "Bitte Box verlassen & Referenzrunde fahren"
+            self._prev_on_pit = on_pit
+            return
 
         # Boxeneinfahrt (Flanke on-track -> pit)
         if on_pit and not self._prev_on_pit:
@@ -221,6 +256,8 @@ class PitCalibrator:
     def status(self) -> dict:
         return {
             "active":   self.active,
+            "armed":    self._armed,
+            "ref_lap":  self._ref_lap,
             "pit_loss": self.pit_loss,
             "fuel_rate": self.fuel_rate,
             "tire_time": self.tire_time,

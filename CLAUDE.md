@@ -74,3 +74,43 @@ Einschränkung: Beim `irsdk`-Replay ist das Session-YAML der Snapshot der
 Aufnahme (ändert sich beim Abspielen nicht weiter). Für Overlay- und
 Builder-Tests reicht das praktisch immer; echte Session-Wechsel
 (Practice→Race) separat aufzeichnen.
+
+## Pit-Kalibrierung (Circle of Doom)
+
+`app/pit_calibrator.py` ist eine State-Machine, die pro Slow-Tick mit dem
+Spieler-Kontext (`SessionTime`, `OnPitRoad`, `Speed`, `FuelLevel`,
+`LapDistPct`, Referenzrunde) gefüttert wird (`telemetry_server._handle_calibration`).
+Sie MISST drei Pit-Parameter aus der Telemetrie (statt sie anzunehmen) und
+speichert sie pro **Auto|Strecke|Layout|Serie** in `app/pit_cache.json`. Die
+gelernten Werte überschreiben die Defaults für den „Circle of Doom".
+
+Bedienung: Im Overlay-Manager **„Pit-Kalibrierung starten"** → sendet ein
+Kommando (`pit_cal_cmd` in `overlay_layout.json`, per Nonce entprellt) und
+blendet das Circle-Overlay mit dem Kalibrier-Panel ein. Läuft nur **live**
+(echtes iRacing, am besten Practice), nicht im Replay.
+
+**Drei Schritte — beliebige Reihenfolge, je ein Slot:** Jeder Boxenbesuch
+(Einfahrt→Ausfahrt) füllt höchstens einen Slot. Sind alle drei gemessen, wird
+automatisch gespeichert (`is_complete()`).
+
+| Schritt | Erkennung | Slot |
+|---|---|---|
+| Boxen-Durchfahrt (ohne Halt) | kein Stillstand ≥ `_MIN_STATIONARY` (1,2 s) | `pit_lane_loss_sec` |
+| Tankstopp | Stillstand **und** Nachtanken ≥ `_MIN_REFUEL_L` (2,0 L) | `fuel_rate_lps` |
+| Reifen-only | Stillstand **und** Sprit-Delta ≤ `_MAX_TIRE_FLAT_L` (0,6 L) | `tire_change_sec` |
+
+Sprit-Delta zwischen 0,6 und 2,0 L → Stopp ist mehrdeutig und wird verworfen.
+
+**Gate (Arming):** Die Kalibrierung wird erst „scharf" (`_armed=True`), wenn
+das Auto auf der Strecke ist (Box mindestens einmal verlassen) UND eine gültige
+Referenzrunde (`LapLastLapTime`/`LapBestLapTime` > 0,5 s) vorliegt. Davor wird
+nichts gemessen — verhindert, dass ein beim Start bereits laufender Boxenbesuch
+(Auto steht schon in der Box) fälschlich als Reifen-/Tankstopp zählt. Die
+Durchfahrt-Messung braucht die Referenzrunde ohnehin (Pit-Verlust = Transit –
+Strecken-Soll). `status()` liefert `armed` und `ref_lap`; das Circle-Overlay
+zeigt die aktuelle Referenzrunde im Kalibrier-Panel an.
+
+Relevante Dateien: `app/pit_calibrator.py` (Messung/Persistenz),
+`app/telemetry_server.py` (`_handle_calibration`, Kommando-Polling),
+`app/overlay_manager.py` (`toggle_pit_calibration`, `_send_pit_cmd`),
+`overlays/circle.html` (Kalibrier-Panel).
