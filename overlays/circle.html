@@ -655,7 +655,7 @@
     let _pitPlannedTPit = null;
     let _pitPlannedStanding = null;
 
-    function updatePit(meCar, refLap, strategy, cars, nowSec) {
+    function updatePit(meCar, refLap, strategy, cars, nowSec, pitSpan) {
       const pit = meCar ? computePitGhost(meCar.pct, refLap, strategy) : null;
       if (!pit) {
         pitG.style.display = "none";
@@ -714,12 +714,24 @@
       const planTPit = (inPit && _pitPlannedTPit != null) ? _pitPlannedTPit : pit.tPit;
       const planStanding = (inPit && _pitPlannedStanding != null) ? _pitPlannedStanding : pit.standing;
 
-      // Restverlust: in der Box ab Einfahrt MONOTON herunterzählen → der Ghost
-      // läuft auf unseren Punkt zu und trifft ihn am Pit-Exit. Auf der Strecke:
-      // voller T_pit = "wo käme ich raus, wenn ich JETZT an die Box ginge".
+      // Restverlust: in der Box ab Einfahrt herunterzählen → der Ghost läuft auf
+      // unseren Punkt zu und trifft ihn am Pit-Exit. Auf der Strecke: voller
+      // T_pit = "wo käme ich raus, wenn ich JETZT an die Box ginge".
+      //
+      // WICHTIG: Die echte Wand-Uhr-Verweildauer in der Box ist NICHT T_pit
+      // (das ist der Verlust!), sondern T_pit + Streckenzeit über die Pit-Spanne
+      // (Ein- bis Ausfahrt). Würde man T_pit direkt per Wand-Uhr herunterzählen,
+      // wäre der Exit-Indikator zu früh fertig (vor der Standzeit). Daher den
+      // Verlust linear über die echte Verweildauer skalieren → 0 erst am Exit.
       let remainingLoss = planTPit;
       if (inPit && _pitEnterSec !== null) {
-        remainingLoss = Math.max(planTPit - Math.max(clock - _pitEnterSec, 0), 0);
+        const elapsed   = Math.max(clock - _pitEnterSec, 0);
+        const trackSpan = (Number.isFinite(pitSpan) && pitSpan > 0 && pit.refLap > 0)
+          ? pitSpan * pit.refLap : 0;
+        const tWall = planTPit + trackSpan;     // echte Box-Verweildauer (Wand-Uhr)
+        remainingLoss = tWall > 0
+          ? planTPit * Math.max(tWall - elapsed, 0) / tWall
+          : Math.max(planTPit - elapsed, 0);
       }
       const remStanding = stationary ? Math.max(planStanding - stillFor, 0) : planStanding;
 
@@ -841,7 +853,13 @@
       for (const idx of Array.from(dotGroups.keys())) {
         if (!present.has(idx)) removeCar(idx);
       }
-      if (!cars.length) { updatePit(null, null, null, [], circle.time); return; }
+      if (!cars.length) { updatePit(null, null, null, [], circle.time, null); return; }
+
+      // Pit-Spanne (Ein- bis Ausfahrt, Rundenanteil) aus den Marken — für die
+      // echte Box-Verweildauer im Exit-Countdown.
+      const _pe = circle.pit_entry_pct, _px = circle.pit_exit_pct;
+      const pitSpan = (Number.isFinite(_pe) && Number.isFinite(_px))
+        ? ((_px - _pe) % 1 + 1) % 1 : null;
 
       // Klassen -> Band (außen/innen)
       const classIds = [...new Set(cars.map(c => c.car_class_id))].sort((a, b) => a - b);
@@ -907,7 +925,7 @@
       if (Number.isFinite(circle.ref_lap) && circle.ref_lap > 0.5) _lastRefLap = circle.ref_lap;
       const refLapHeld = (Number.isFinite(circle.ref_lap) && circle.ref_lap > 0.5) ? circle.ref_lap : _lastRefLap;
       const meCar = cars.find(c => c.me) || null;
-      updatePit(meCar, refLapHeld, strategy, cars, circle.time);
+      updatePit(meCar, refLapHeld, strategy, cars, circle.time, pitSpan);
     }
 
     // Greedy-Lane-Zuweisung auf dem KREIS (ohne Naht bei 12 Uhr):
