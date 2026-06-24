@@ -625,6 +625,16 @@ class TelemetryServer:
             except Exception:
                 logger.exception("Fehler in PitCalibrator.feed")
 
+            # Passives Marken-Lernen: ausserhalb einer aktiven Kalibrierung die
+            # Pit-Ein-/Ausfahrt bei echten Boxenstopps selbst korrigieren.
+            if not cal.active:
+                try:
+                    cal.observe_marks(key=PitCalibrator.make_key(self.ir),
+                                      on_pit=on_pit,
+                                      pct=float(pct) if pct is not None else None)
+                except Exception:
+                    logger.exception("Fehler in PitCalibrator.observe_marks")
+
             # Live-Reifenauswahl aus der Blackbox merken (nach pit_config-Bau setzen)
             if pit_sv_flags is not None:
                 try:

@@ -103,6 +103,11 @@ class PitCalibrator:
         self._cache = {}
         self._cache_loaded = False
 
+        # Passives Marken-Lernen (unabhängig von der Kalibrierung)
+        self._pm_prev_on_pit = False
+        self._pm_entry_pct = None
+        self._pm_last_ontrack = None
+
     # ------------------------------------------------------------------
     # Steuerung
     # ------------------------------------------------------------------
@@ -442,6 +447,9 @@ class PitCalibrator:
         if self._pit_exit_pct is not None:
             entry["pit_exit_pct"] = self._pit_exit_pct
         self._cache[key] = entry
+        self._write_cache()
+
+    def _write_cache(self):
         try:
             p = _cache_path()
             tmp = p + ".tmp"
@@ -450,6 +458,43 @@ class PitCalibrator:
             os.replace(tmp, p)
         except Exception as e:
             print("pit_cache schreiben fehlgeschlagen:", e)
+
+    # ------------------------------------------------------------------
+    # Passives Lernen der Pit-Marken (auch OHNE aktive Kalibrierung)
+    # ------------------------------------------------------------------
+
+    def observe_marks(self, *, key, on_pit, pct):
+        """Aktualisiert die Pit-Marken im Cache bei einer ECHTEN Boxendurchquerung
+        — unabhängig von der Kalibrierung, flacker-gefiltert. So korrigieren sich
+        falsch erfasste Marken beim nächsten realen Boxenstopp selbst, ohne dass
+        pit_loss/fuel/tire neu gemessen werden müssen."""
+        if pct is None or not key:
+            return
+        on_pit = bool(on_pit)
+        # Einfahrt-Flanke: letzte On-Track-Position vor dem Abbiegen merken
+        if on_pit and not self._pm_prev_on_pit:
+            self._pm_entry_pct = self._pm_last_ontrack if self._pm_last_ontrack is not None else pct
+        # Ausfahrt-Flanke: echte Durchquerung? -> Marken aktualisieren
+        if (not on_pit) and self._pm_prev_on_pit and self._pm_entry_pct is not None:
+            span = ((pct - self._pm_entry_pct) % 1 + 1) % 1
+            if 0.005 < span < 0.5:
+                self._update_cached_marks(key,
+                                          round(self._pm_entry_pct % 1.0, 5),
+                                          round(pct % 1.0, 5))
+            self._pm_entry_pct = None
+        if not on_pit:
+            self._pm_last_ontrack = pct
+        self._pm_prev_on_pit = on_pit
+
+    def _update_cached_marks(self, key, entry_pct, exit_pct):
+        self._load_cache()
+        entry = self._cache.get(key) if isinstance(self._cache.get(key), dict) else {}
+        if entry.get("pit_entry_pct") == entry_pct and entry.get("pit_exit_pct") == exit_pct:
+            return  # unverändert -> nicht schreiben
+        entry["pit_entry_pct"] = entry_pct
+        entry["pit_exit_pct"] = exit_pct
+        self._cache[key] = entry
+        self._write_cache()
 
     def learned_for(self, key: str) -> dict:
         """Gelernte Werte für den Key (snake_case, wie overlay_config.json['pit'])."""

@@ -98,5 +98,38 @@ def main():
     print("test_pit_calibrator: ALLE ASSERTS OK")
 
 
+def test_passive_marks():
+    """Passives Marken-Lernen: Vorbeifahr-Flacker ignorieren, echte Durchquerung
+    übernehmen, unveränderte Marken nicht erneut schreiben."""
+    c = PitCalibrator()
+    writes = []
+    c._write_cache = lambda: writes.append(1)   # Datei-Write abfangen
+    c._cache_loaded = True
+    KEY = "testcar|testtrack|cfg|Race"
+
+    def step(on_pit, pct):
+        c.observe_marks(key=KEY, on_pit=on_pit, pct=pct)
+
+    # 1) Flacker an der Grenzlinie (1 Frame on_pit) -> kein Update
+    step(False, 0.90); step(False, 0.953); step(True, 0.9531)
+    step(False, 0.9532); step(False, 0.96)
+    assert KEY not in c._cache, f"Flacker gespeichert: {c._cache}"
+
+    # 2) echte Durchquerung 0.90 -> 0.04 -> Update
+    step(False, 0.88); step(False, 0.90)
+    step(True, 0.92); step(True, 0.97); step(True, 0.99); step(True, 0.02)
+    step(False, 0.04)
+    m = c._cache.get(KEY, {})
+    assert abs(m.get("pit_entry_pct", 0) - 0.90) < 1e-6, m
+    assert abs(m.get("pit_exit_pct", 0) - 0.04) < 1e-6, m
+
+    # 3) unveränderte Durchquerung -> kein erneuter Write
+    nw = len(writes)
+    step(False, 0.90); step(True, 0.95); step(False, 0.04)
+    assert len(writes) == nw, "unveränderte Marken erneut geschrieben"
+    print("test_passive_marks: ALLE ASSERTS OK")
+
+
 if __name__ == "__main__":
     main()
+    test_passive_marks()
