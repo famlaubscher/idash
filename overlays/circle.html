@@ -331,6 +331,7 @@
       refLapFallbackSec: 100.0, // Ersatz-Rundenzeit, solange keine echte vorliegt
       tiresSelected:   null,   // live aus Blackbox (0–4); null = unbekannt -> changeTires
       fuelSelected:    null,   // live aus Blackbox: wird getankt?
+      fuelAmount:      null,   // live aus Blackbox: gewählte Tankmenge (L)
     };
     // Bekannte Keys, die aus overlay_config.json["pit"] übernommen werden dürfen.
     const PIT_CONFIG_KEYS = Object.keys(PIT_CONFIG);
@@ -373,6 +374,25 @@
         const refuelFull = tank / rate;
         const standing   = Math.max(refuelFull, Number.isFinite(tire4) ? tire4 : 0);
         html += `<br><span class="cl-lbl">Stop voll</span> <span class="cl-val">${fmt(loss + standing)}</span>`;
+      }
+
+      // Live-Auswahl aus der Blackbox: spiegelt Reifen-Ab/Anwahl + Sprit sofort.
+      // Zeigt "n/a", wenn die Felder (PitSvFlags) nicht lesbar sind -> Diagnose.
+      if (Number.isFinite(PIT_CONFIG.tiresSelected) || Number.isFinite(PIT_CONFIG.fuelAmount)) {
+        const tires = Number.isFinite(PIT_CONFIG.tiresSelected) ? PIT_CONFIG.tiresSelected : 0;
+        const tSel  = Number.isFinite(tire4) ? tire4 * tires / 4 : 0;
+        // Tankmenge: Blackbox-Auswahl -> Strategie -> 0
+        let liters = (PIT_CONFIG.fuelSelected && Number.isFinite(PIT_CONFIG.fuelAmount))
+          ? PIT_CONFIG.fuelAmount
+          : (strategy && Number.isFinite(strategy.refuel_next_stop) ? strategy.refuel_next_stop : 0);
+        if (!(liters > 0)) liters = 0;
+        const rSel  = rate > 0 ? liters / rate : 0;
+        const tStop = loss + Math.max(tSel, rSel);
+        const fuelTxt = liters > 0 ? ` · ${liters.toFixed(0)} L` : " · kein Sprit";
+        html += `<br><span class="cl-lbl">Gewählt</span> <span class="cl-val">${tires} Reifen${fuelTxt}</span>`
+              + ` <span class="cl-lbl">→</span> <span class="cl-val">${fmt(tStop)}</span>`;
+      } else {
+        html += `<br><span class="cl-lbl">Blackbox</span> <span class="cl-val">n/a</span>`;
       }
       centerLosses.innerHTML = html;
       centerLosses.style.display = "";

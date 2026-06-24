@@ -95,24 +95,27 @@ blendet das Circle-Overlay mit dem Kalibrier-Panel ein. Läuft nur **live**
 (Einfahrt→Ausfahrt) füllt höchstens einen Slot. Sind alle drei gemessen, wird
 automatisch gespeichert (`is_complete()`).
 
-| Schritt | Erkennung (deterministisch) | Slot |
+| Schritt | Erkennung | Slot |
 |---|---|---|
-| Boxen-Durchfahrt (ohne Halt) | kein Service (`PitstopActive` nie true) | `pit_lane_loss_sec` (+ Pit-Marken) |
-| Tankstopp | Service **und** FuelFill-Bit (`PitSvFlags & 0x10`) | `fuel_rate_lps` |
-| Reifen-Stopp (kein Tanken) | Service **und** Reifen-Bits, kein Sprit | `tire_change_sec` |
+| Boxen-Durchfahrt | Auto stand **nie** (`speed` nie < `_STOP_SPEED`) | `pit_lane_loss_sec` (+ Pit-Marken) |
+| Tankstopp | gestanden **und** FuelFill-Bit/Spritanstieg | `fuel_rate_lps` |
+| Reifen-Stopp | gestanden **und** Reifen-Bits (`PitSvFlags & 0x0F`), kein Sprit | `tire_change_sec` |
 
-**Deterministisch statt heuristisch:** Das Service-Fenster kommt aus
-`PitstopActive`, „was gemacht wurde" aus `PitSvFlags` (Reifen-Bits `0x0F`,
-FuelFill `0x10`). Die alte Speed-Stillstands- und Sprit-Schwellen-Heuristik
-(`_STOP_SPEED`, `_MIN_REFUEL_L`, `_MAX_TIRE_FLAT_L`) ist nur noch **Fallback**,
-wenn diese Felder fehlen (z.B. alte Aufnahmen).
+**Deterministisch über die Blackbox:** „Was gemacht wurde" kommt
+AUSSCHLIESSLICH aus `PitSvFlags` (Reifen-Bits `0x0F`, FuelFill `0x10`); das
+Service-Fenster aus `PitstopActive` (Fallback: Stillstand via `_STOP_SPEED`).
+Wichtig: Ohne erkennbare Reifen-Bits wird **NICHT** „4 Reifen" geraten — sonst
+würde jeder spritlose Stopp (Meatball, Reparatur, Stehenbleiben, Spawn in der
+Box) fälschlich als Reifenwechsel gemessen. Ein Stopp ohne Reifen/Sprit oder
+ohne Blackbox-Telemetrie füllt keinen Slot (Status meldet das).
 
 **Reifen 0–4 / Hochrechnung:** Beim Reifen-Stopp wird die Service-Dauer über die
-Reifenanzahl (`PitSvFlags`) auf alle 4 normiert:
-`tire_change_sec = dauer × 4 / anzahl`. Im Pit-Zeitmodell ergibt sich die
-Standzeit für n Reifen als `tire_change_sec × n/4` (live skaliert über die
-Blackbox-Auswahl `tiresSelected`/`fuelSelected`, die der Server in `pit_config`
-legt).
+gemeldete Reifenanzahl auf alle 4 normiert: `tire_change_sec = dauer × 4 / anzahl`.
+Im Pit-Zeitmodell ergibt sich die Standzeit für n Reifen als
+`tire_change_sec × n/4`. Der Server legt die Live-Blackbox-Auswahl
+(`tiresSelected`, `fuelSelected`, `fuelAmount` aus `PitSvFuel`) in `pit_config`;
+`circle.html` zeigt sie als „Gewählt: n Reifen · X L → Stoppzeit" (bzw.
+„Blackbox n/a", wenn die Felder nicht lesbar sind — dient als Diagnose).
 
 **Pit-Marken deterministisch:** Bei jedem Besuch werden die exakten
 Boxen-Ein-/Ausfahrt-Positionen (`pit_entry_pct`/`pit_exit_pct`, LapDistPct)

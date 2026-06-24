@@ -70,7 +70,9 @@ class PitCalibrator:
         self._svc_start = None           # Beginn Service-Fenster (PitstopActive/Stillstand)
         self._svc_end = None             # Ende Service-Fenster
         self._svc_active = False         # fand in diesem Besuch ein Service statt?
-        self._sv_flags = 0               # OR der PitSvFlags während des Service
+        self._was_stationary = False     # Auto stand (speed < _STOP_SPEED)
+        self._sv_flags = 0               # OR der PitSvFlags während des Besuchs
+        self._saw_flags = False          # PitSvFlags überhaupt empfangen?
         self._fuel_samples = []          # (time, fuel) während des Service
 
         # Deterministische Boxen-Ein-/Ausfahrt-Marken (LapDistPct) + Reifeninfo
@@ -149,7 +151,9 @@ class PitCalibrator:
         self._svc_start = None
         self._svc_end = None
         self._svc_active = False
+        self._was_stationary = False     # Auto stand (speed < _STOP_SPEED)
         self._sv_flags = 0
+        self._saw_flags = False          # PitSvFlags überhaupt empfangen?
         self._fuel_samples = []
 
     def _any_measured(self) -> bool:
@@ -227,12 +231,21 @@ class PitCalibrator:
             self._svc_start = None
             self._svc_end = None
             self._svc_active = False
+            self._was_stationary = False
             self._sv_flags = 0
+            self._saw_flags = False
             self._fuel_samples = []
 
         # Während des Boxenbesuchs: Service-Fenster + Tankverlauf erfassen.
-        # Deterministisch über PitstopActive; Fallback = Stillstand (Speed).
         if on_pit:
+            # Blackbox-Auswahl (welche Reifen / Sprit) jederzeit mitschneiden.
+            if pit_sv_flags is not None:
+                self._saw_flags = True
+                self._sv_flags |= int(pit_sv_flags)
+            # Stand das Auto? (für Durchfahrt-Abgrenzung)
+            if speed is not None and speed < _STOP_SPEED:
+                self._was_stationary = True
+            # Service-Fenster: deterministisch über PitstopActive; Fallback Stillstand.
             if pitstop_active is not None:
                 active = bool(pitstop_active)
             else:
@@ -241,12 +254,8 @@ class PitCalibrator:
                 if self._svc_start is None:
                     self._svc_start = time
                 self._svc_end = time
-                if pit_sv_flags is not None:
-                    self._sv_flags |= int(pit_sv_flags)
                 if fuel is not None:
                     self._fuel_samples.append((time, fuel))
-                # "echter Service": deterministisch sofort, per Fallback erst
-                # nach der Mindest-Standzeit.
                 if pitstop_active is not None or (time - self._svc_start) >= _MIN_STATIONARY:
                     self._svc_active = True
 
@@ -270,8 +279,8 @@ class PitCalibrator:
             self._pit_entry_pct = round(self._entry_pct % 1.0, 5)
         self._pit_exit_pct = round(exit_pct % 1.0, 5)
 
-        if not self._svc_active:
-            # --- Boxen-DURCHFAHRT -> Pit-Lane-Verlust ---
+        if not self._was_stationary:
+            # --- Boxen-DURCHFAHRT (Auto stand NIE) -> Pit-Lane-Verlust ---
             # Rohdaten (Transit + Streckenanteil) festhalten und gegen die
             # schnellste SAUBERE Runde rechnen. Liegt noch keine saubere Runde
             # vor, wird der Verlust später automatisch nachgerechnet (feed()).
@@ -288,22 +297,21 @@ class PitCalibrator:
                     else:
                         self._last_event = "Durchfahrt unplausibel — bitte wiederholen"
         else:
-            # --- STOPP mit Service: tanken oder Reifen? ---
+            # --- STOPP (Auto stand): tanken oder Reifen? ---
             svc_dur = (self._svc_end - self._svc_start) \
                 if (self._svc_start is not None and self._svc_end is not None) else 0.0
 
             fuels = [f for _, f in self._fuel_samples if f is not None]
             fuel_delta = (max(fuels) - min(fuels)) if len(fuels) >= 2 else 0.0
 
-            # WAS wurde gemacht? Deterministisch aus PitSvFlags, sonst Heuristik.
-            if self._sv_flags:
-                tire_count = bin(self._sv_flags & _PITSV_TIRE_MASK).count("1")
-                is_fuel = bool(self._sv_flags & _PITSV_FUEL) or fuel_delta >= _MIN_REFUEL_L
-            else:
-                # Fallback ohne Blackbox-Info: Reifenanzahl unbekannt -> als 4
-                # annehmen; Klassifizierung über Sprit-Schwellen.
-                is_fuel = fuel_delta >= _MIN_REFUEL_L
-                tire_count = 0 if fuel_delta > _MAX_TIRE_FLAT_L else 4
+            # WAS wurde gemacht? AUSSCHLIESSLICH aus der Blackbox (PitSvFlags):
+            # Reifen-Bits = Reifenwechsel, FuelFill/Spritanstieg = Tanken. Ohne
+            # Blackbox-Info wird NICHT "4 Reifen" geraten — sonst würde jeder
+            # spritlose Stopp (Meatball, Stehenbleiben, Spawn) fälschlich als
+            # Reifenwechsel gemessen.
+            tire_count = bin(self._sv_flags & _PITSV_TIRE_MASK).count("1") if self._saw_flags else 0
+            is_fuel = (bool(self._sv_flags & _PITSV_FUEL) if self._saw_flags else False) \
+                      or fuel_delta >= _MIN_REFUEL_L
 
             if tire_count > 0:
                 self._tires_last = tire_count
@@ -312,7 +320,7 @@ class PitCalibrator:
                 rate = self._fuel_rate_from_samples()
                 if rate and 0.3 < rate < 20.0:
                     self.fuel_rate = round(rate, 3)
-                    extra = " (+Reifen, Reifenzeit separat messen)" if tire_count > 0 else ""
+                    extra = " (+Reifen, Reifenzeit separat ohne Tanken messen)" if tire_count > 0 else ""
                     self._last_event = f"Tankrate gemessen: {self.fuel_rate:.2f} L/s{extra}"
                 else:
                     self._last_event = "Tankrate unplausibel — bitte wiederholen"
@@ -326,8 +334,12 @@ class PitCalibrator:
                     )
                 else:
                     self._last_event = "Reifenzeit unplausibel — bitte wiederholen"
+            elif not self._saw_flags:
+                # Keine Blackbox-Telemetrie -> Reifen nicht messbar.
+                self._last_event = "Reifenzeit braucht Blackbox (PitSvFlags) — nicht verfügbar"
             else:
-                self._last_event = "Stopp ohne erkennbaren Service — Schritt wiederholen"
+                # Service ohne Reifen/Sprit laut Blackbox (Meatball/Reparatur/Stehen).
+                self._last_event = "Stopp ohne Reifen/Sprit (Blackbox) — nicht gemessen"
 
         # Bei Komplettierung automatisch speichern
         self._maybe_complete()

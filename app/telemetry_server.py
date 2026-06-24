@@ -592,6 +592,7 @@ class TelemetryServer:
         # Spieler-Kontext füttern (nur sinnvoll wenn verbunden)
         live_tires_selected = None
         live_fuel_selected = None
+        live_fuel_amount = None
         if self.ir.is_connected:
             time = self._player_scalar("SessionTime")
             on_pit = self._player_scalar("OnPitRoad")
@@ -611,6 +612,7 @@ class TelemetryServer:
             # Deterministische Pit-Service-Signale (None, falls nicht vorhanden)
             pitstop_active = self._player_scalar("PitstopActive")
             pit_sv_flags = self._player_scalar("PitSvFlags")
+            pit_sv_fuel = self._player_scalar("PitSvFuel")   # gewählte Tankmenge
             try:
                 cal.feed(time=float(time) if time is not None else None,
                          on_pit=on_pit,
@@ -629,6 +631,11 @@ class TelemetryServer:
                     f = int(pit_sv_flags)
                     live_tires_selected = bin(f & 0x0F).count("1")
                     live_fuel_selected = bool(f & 0x10)
+                except (TypeError, ValueError):
+                    pass
+            if pit_sv_fuel is not None:
+                try:
+                    live_fuel_amount = float(pit_sv_fuel)
                 except (TypeError, ValueError):
                     pass
 
@@ -650,6 +657,8 @@ class TelemetryServer:
             pit_config["tiresSelected"] = live_tires_selected
         if live_fuel_selected is not None:
             pit_config["fuelSelected"] = live_fuel_selected
+        if live_fuel_amount is not None:
+            pit_config["fuelAmount"] = live_fuel_amount
 
         return pit_config, cal.status()
 
