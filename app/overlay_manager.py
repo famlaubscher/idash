@@ -4,7 +4,7 @@ import sys
 import ctypes
 import threading
 
-from PyQt5.QtCore import Qt, QUrl
+from PyQt5.QtCore import Qt, QUrl, QTimer
 from PyQt5.QtGui import QPixmap, QIcon
 from PyQt5.QtWidgets import (
     QApplication,
@@ -607,19 +607,55 @@ class OverlayWindow(QWidget):
         html_path = os.path.abspath(html_path)
         self.webview.load(QUrl.fromLocalFile(html_path))
         self.webview.loadFinished.connect(self._on_load_finished)
-        self.webview.page().contentsSizeChanged.connect(self._on_contents_size_changed)
-
-    def _on_contents_size_changed(self, size):
-        w = int(size.width())
-        h = int(size.height())
-        if w > 10 and h > 10:
-            self.resize(w, h)
+        # KEIN contentsSizeChanged-Auto-Resize: self.resize(contentsSize) erwartet
+        # logische Pixel, contentsSizeChanged liefert aber Device-Pixel. Bei DPR>1
+        # (z. B. Monitor @ 200 %) verdoppelt sich die Fenstergröße pro Signal-Runde
+        # (280 → … → 280x128 = 35840), bis QtWebEngine den Framebuffer nicht mehr
+        # allozieren kann (createDIB-Fehler) und der Prozess mit 0xC0000409 abstürzt.
+        # Overlays nutzen ihre kanonische Größe; Skalierung passiert im HTML/CSS.
 
     def _on_load_finished(self, ok: bool):
         if ok:
             self._apply_js_edit_mode()
             if callable(self._on_load_extra):
                 self._on_load_extra()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Kanonische (Default-)Fenstergröße merken, falls noch nicht gesetzt.
+        if getattr(self, "_canonical_size", None) is None:
+            self._canonical_size = (self.width(), self.height())
+        # Per-Monitor-DPI (z. B. 4K @ 150 % + UHD @ 100 %): QtWebEngine berechnet
+        # das Viewport beim ersten Anzeigen auf einem Monitor nicht immer korrekt
+        # — der Inhalt erscheint dann abgeschnitten (nur obere linke Ecke) oder
+        # gar nicht, bis man das Fenster einmal über die Monitorgrenze zieht.
+        # Wir erzwingen den Relayout direkt nach dem Anzeigen.
+        QTimer.singleShot(0, self._kick_relayout)
+        QTimer.singleShot(120, self._kick_relayout)
+        wh = self.windowHandle()
+        if wh is not None and not getattr(self, "_screen_hooked", False):
+            self._screen_hooked = True
+            wh.screenChanged.connect(self._on_screen_changed)
+
+    def _on_screen_changed(self, *_):
+        # Beim Monitorwechsel skaliert Qt (AA_EnableHighDpiScaling) die
+        # Fenstergröße mit dem DPI-Faktor. Das schaukelt sich bei wiederholtem
+        # Hin-/Herschieben auf (780x650 → … → 29x22), bis das Fenster
+        # verschwindet. Wir setzen die kanonische Größe zurück und layouten neu.
+        size = getattr(self, "_canonical_size", None)
+        if size is not None and (self.width(), self.height()) != tuple(size):
+            self.resize(size[0], size[1])
+        QTimer.singleShot(0, self._kick_relayout)
+
+    def _kick_relayout(self):
+        # 1px-Nudge der Fenstergröße erzwingt ein resizeEvent bis in die
+        # WebEngine-Ansicht, wodurch das Viewport für den aktuellen Monitor
+        # neu berechnet wird. Position (top-left) bleibt unverändert.
+        if not self.isVisible() or not getattr(self, "webview", None):
+            return
+        g = self.geometry()
+        self.resize(g.width(), g.height() + 1)
+        self.resize(g.width(), g.height())
 
     def _apply_js_edit_mode(self):
         if not self.webview:
@@ -840,30 +876,58 @@ class OverlayManager(QWidget):
         except Exception as e:
             print("Konnte overlay_layout.json nicht schreiben:", e)
 
+    def _clamp_to_screen(self, x: int, y: int, w: int, h: int):
+        """Hält die Fensterposition im sichtbaren Gesamt-Desktop (alle Monitore),
+        sodass mindestens ein Streifen sichtbar bleibt und nichts „off-screen“
+        verloren geht."""
+        try:
+            screens = QApplication.screens()
+            if not screens:
+                return x, y
+            virt = screens[0].geometry()
+            for s in screens[1:]:
+                virt = virt.united(s.geometry())
+            margin = 80
+            x = max(virt.left() - max(0, w - margin), min(x, virt.right() - margin))
+            y = max(virt.top(), min(y, virt.bottom() - margin))
+        except Exception:
+            pass
+        return int(x), int(y)
+
     def _restore_geometry(self, win: QWidget, key: str):
         if not win:
             return
+        # Die kanonische (Default-)Fenstergröße kommt aus dem resize() im toggle_*
+        # und wird hier festgehalten. Sie wird BEWUSST NICHT aus der Persistenz
+        # übernommen: Qt skaliert die Fenstergröße beim Monitorwechsel mit dem
+        # DPI-Faktor, das kann sich bis auf wenige Pixel aufschaukeln (29x22) und
+        # würde das Fenster sonst dauerhaft unsichtbar machen. Persistiert wird
+        # nur die Position.
+        win._canonical_size = (win.width(), win.height())
         g = self.layout_state.get(key)
-        if not isinstance(g, dict):
-            return
-        try:
-            x = int(g.get("x", win.x()))
-            y = int(g.get("y", win.y()))
-            w = int(g.get("w", win.width()))
-            h = int(g.get("h", win.height()))
-            win.setGeometry(x, y, w, h)
-        except Exception:
-            pass
+        x, y = win.x(), win.y()
+        if isinstance(g, dict):
+            try:
+                x = int(g.get("x", x))
+                y = int(g.get("y", y))
+            except Exception:
+                pass
+        x, y = self._clamp_to_screen(x, y, win.width(), win.height())
+        win.move(x, y)
 
     def _store_geometry(self, win: QWidget, key: str):
         if not win:
             return
         g = win.geometry()
+        # Größe: immer die kanonische Größe schreiben, nie einen evtl. durch
+        # DPI-Rescale geschrumpften Live-Wert. Beim Restore wird w/h ohnehin
+        # ignoriert; wir halten die Datei nur sauber/lesbar.
+        size = getattr(win, "_canonical_size", None) or (g.width(), g.height())
         self.layout_state[key] = {
             "x": g.x(),
             "y": g.y(),
-            "w": g.width(),
-            "h": g.height(),
+            "w": int(size[0]),
+            "h": int(size[1]),
         }
         self._save_layout_state()
 
@@ -1304,10 +1368,16 @@ def main():
 
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+    # NICHT --force-device-scale-factor setzen: Bei gemischter Monitor-DPI
+    # (z. B. 4K @ 150 % + UHD @ 100 %) erzwingt das in der eingebetteten
+    # Chromium-Ansicht einen festen DPR, der nicht mehr zur logischen
+    # Fenstergröße passt → Overlay-Inhalt wird abgeschnitten / falsch skaliert.
+    # Mit PER_MONITOR_DPI_AWARE + AA_EnableHighDpiScaling skaliert QtWebEngine
+    # korrekt pro Monitor. --disable-gpu/--no-sandbox aus main bleiben erhalten.
     os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
-        os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "--force-device-scale-factor=1")
+        os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
         + " --disable-gpu --no-sandbox"
-    )
+    ).strip()
     os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
     app = QApplication(sys.argv)
     app.setWindowIcon(QIcon(LOGO_PATH))
