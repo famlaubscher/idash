@@ -647,6 +647,13 @@
     let _pitInPrev = false;         // in_pit im letzten Frame (Flankenerkennung)
     let _pitEnterSec = null;        // Replay-Uhr-Zeitpunkt der Boxeneinfahrt
     let _pitHasStopped = false;     // wurde in diesem Boxenbesuch schon gestanden?
+    // Bei Boxeneinfahrt eingefrorene Plan-Werte: PitSvFlags zaehlt waehrend des
+    // Service die VERBLEIBENDEN Reifen herunter (4->2->0) -> tiresSelected
+    // schrumpft -> die geschaetzte Standzeit wuerde mitten im Stopp einbrechen.
+    // Deshalb tPit/standing beim Einfahren einmal festhalten und nur per Zeit
+    // herunterzaehlen.
+    let _pitPlannedTPit = null;
+    let _pitPlannedStanding = null;
 
     function updatePit(meCar, refLap, strategy, cars, nowSec) {
       const pit = meCar ? computePitGhost(meCar.pct, refLap, strategy) : null;
@@ -687,22 +694,34 @@
       const stillFor = Math.max(clock - _pitLastMoveSec, 0);
       const inPit = !!meCar.in_pit;
 
-      // Boxenbesuch-Flanken: Zeit seit Boxeneinfahrt bestimmen
-      if (inPit && !_pitInPrev) { _pitEnterSec = clock; _pitHasStopped = false; }
-      if (!inPit) { _pitEnterSec = null; _pitHasStopped = false; }
+      // Boxenbesuch-Flanken: Zeit seit Boxeneinfahrt + Plan-Werte einfrieren
+      if (inPit && !_pitInPrev) {
+        _pitEnterSec = clock; _pitHasStopped = false;
+        _pitPlannedTPit = pit.tPit;          // volle Reifenwahl bei Einfahrt
+        _pitPlannedStanding = pit.standing;
+      }
+      if (!inPit) {
+        _pitEnterSec = null; _pitHasStopped = false;
+        _pitPlannedTPit = null; _pitPlannedStanding = null;
+      }
       _pitInPrev = inPit;
 
       const stationary = inPit && stillFor > 1.0;
       if (stationary) _pitHasStopped = true;
 
+      // In der Box die eingefrorenen Plan-Werte verwenden (nicht aus der live
+      // schrumpfenden tiresSelected neu rechnen). Auf der Strecke: Live-Schätzung.
+      const planTPit = (inPit && _pitPlannedTPit != null) ? _pitPlannedTPit : pit.tPit;
+      const planStanding = (inPit && _pitPlannedStanding != null) ? _pitPlannedStanding : pit.standing;
+
       // Restverlust: in der Box ab Einfahrt MONOTON herunterzählen → der Ghost
       // läuft auf unseren Punkt zu und trifft ihn am Pit-Exit. Auf der Strecke:
       // voller T_pit = "wo käme ich raus, wenn ich JETZT an die Box ginge".
-      let remainingLoss = pit.tPit;
+      let remainingLoss = planTPit;
       if (inPit && _pitEnterSec !== null) {
-        remainingLoss = Math.max(pit.tPit - Math.max(clock - _pitEnterSec, 0), 0);
+        remainingLoss = Math.max(planTPit - Math.max(clock - _pitEnterSec, 0), 0);
       }
-      const remStanding = stationary ? Math.max(pit.standing - stillFor, 0) : pit.standing;
+      const remStanding = stationary ? Math.max(planStanding - stillFor, 0) : planStanding;
 
       let ghostPct;
       if (samples.length >= 2) {
@@ -759,7 +778,7 @@
       if (stationary) {
         standTxt = remStanding > 0.5 ? ("steht noch " + Math.ceil(remStanding) + "s") : "fertig – raus!";
       } else {
-        standTxt = "steht " + Math.round(pit.standing) + "s";
+        standTxt = "steht " + Math.round(planStanding) + "s";
       }
       pitDetailEl.textContent = `${litTxt} · ${standTxt}`;
 
