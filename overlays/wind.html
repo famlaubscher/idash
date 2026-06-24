@@ -10,6 +10,7 @@
       overflow: hidden;
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       color: #e5e7eb;
+      visibility: hidden;
     }
 
     .wind-wrapper {
@@ -160,6 +161,7 @@
     function handleMessage(data) {
       try {
         const payload = JSON.parse(data);
+        document.body.style.visibility = payload.connected ? 'visible' : 'hidden';
         if (window.__applyCardBgAlpha) window.__applyCardBgAlpha(payload.card_bg_alpha);
         applyWind(payload);
       } catch(e) {}

@@ -366,9 +366,20 @@ class TelemetryServer:
         except Exception as e:
             print("WARNUNG: Fehler beim Zurücksetzen der Builder:", e)
 
-        # Caches leeren
+        # Caches leeren – explizite Leer-Werte damit das Overlay sofort
+        # die alten Daten verwirft und nicht bis zum nächsten Slow-Tick wartet.
         self._tyre_cache.clear()
-        self._slow_cache.clear()
+        self._slow_cache = {
+            "relative":     [],
+            "standings":    [],
+            "session_info": {},
+            "strategy":     {},
+            "circle": {
+                "cars": [], "sectors": [], "track_name": None,
+                "ref_lap": None, "time": None,
+                "pit_entry_pct": None, "pit_exit_pct": None,
+            },
+        }
         self._slow_tick = 0
 
     # -------------------- Tyre-Handling ---------------------------------

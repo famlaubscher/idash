@@ -16,6 +16,7 @@
     display: flex;
     align-items: flex-start;
     justify-content: flex-start;
+    visibility: hidden;
   }
 
   .relative-wrapper {
@@ -882,6 +883,7 @@
 
     function applyPayload(payload) {
       if (!payload || typeof payload !== "object") return;
+      document.body.style.visibility = payload.connected ? 'visible' : 'hidden';
 
       const relList = payload.relative || payload.rel || [];
       renderRelative(relList);

@@ -311,6 +311,15 @@ class OverlayWindow(QWidget):
         html_path = os.path.abspath(html_path)
         self.webview.load(QUrl.fromLocalFile(html_path))
         self.webview.loadFinished.connect(self._on_load_finished)
+        self.webview.page().contentsSizeChanged.connect(self._on_contents_size_changed)
+
+    def _on_contents_size_changed(self, size):
+        """Passt das Fenster an den tatsächlichen HTML-Inhalt an.
+        So ist die greifbare Fläche im Bearbeitungsmodus genau so groß wie der Overlay."""
+        w = int(size.width())
+        h = int(size.height())
+        if w > 10 and h > 10:
+            self.resize(w, h)
 
     def _on_load_finished(self, ok: bool):
         if ok:

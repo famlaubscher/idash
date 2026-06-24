@@ -22,6 +22,7 @@
       background: transparent;
       font-family: var(--font);
       color: var(--text-main);
+      visibility: hidden;
     }
 
     body {
@@ -604,6 +605,7 @@
         }
         if (timeEl) timeEl.textContent = Number.isFinite(carCount) ? "Cars: " + carCount : "Cars: -";
 
+        document.body.style.visibility = payload.connected ? 'visible' : 'hidden';
         if (!payload.connected) { renderStandings([]); return; }
         renderStandings(standings);
       } catch (e) {

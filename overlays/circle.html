@@ -10,6 +10,7 @@
       overflow: hidden;
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       color: #e5e7eb;
+      visibility: hidden;
     }
 
     /* Bühne mit fester Koordinaten-Basis (480x480), per Scale zoombar */
@@ -856,6 +857,7 @@
     function handleMessage(data) {
       try {
         const payload = JSON.parse(data);
+        document.body.style.visibility = payload.connected ? 'visible' : 'hidden';
         if (window.__applyCardBgAlpha) window.__applyCardBgAlpha(payload.card_bg_alpha);
         applyPitConfig(payload.pit_config);
         renderCircle(payload.circle, payload.strategy);

@@ -11,6 +11,7 @@
             overflow: hidden;
             font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
             color: #fff;
+            visibility: hidden;
         }
 
         .hud-wrapper {
@@ -441,6 +442,7 @@
             ws.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
+                    document.body.style.visibility = data.connected ? 'visible' : 'hidden';
                     if (window.__applyCardBgAlpha) window.__applyCardBgAlpha(data.card_bg_alpha);
                     applyTelemetry(data);
                 } catch (e) {

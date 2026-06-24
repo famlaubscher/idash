@@ -10,6 +10,7 @@
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       color: #e5e7eb;
       overflow: hidden;
+      visibility: hidden;
     }
     body {
       display: flex;
@@ -603,7 +604,7 @@
     if (OFFLINE_MODE || (socket && socket.readyState === WebSocket.OPEN)) return;
     try { socket = new WebSocket(WS_URL); } catch(e) { scheduleReconnect(); return; }
     socket.onopen    = () => console.log("Strategy WS connected");
-    socket.onmessage = e => { try { const d = JSON.parse(e.data); if (window.__applyCardBgAlpha) window.__applyCardBgAlpha(d.card_bg_alpha); apply(d); } catch(ex) { console.error(ex); } };
+    socket.onmessage = e => { try { const d = JSON.parse(e.data); document.body.style.visibility = d.connected ? 'visible' : 'hidden'; if (window.__applyCardBgAlpha) window.__applyCardBgAlpha(d.card_bg_alpha); apply(d); } catch(ex) { console.error(ex); } };
     socket.onclose   = () => scheduleReconnect();
     socket.onerror   = e => console.error(e);
   }
