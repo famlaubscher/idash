@@ -43,7 +43,7 @@ def main():
     feed(150.5, True, 25.0, 49.0, 0.31, 96.0, active=False, flags=0)
     feed(160.0, True, 25.0, 49.0, 0.40, 96.0, active=False, flags=0)
     feed(170.5, False, 40.0, 49.0, 0.45, 96.0, active=False, flags=0)
-    assert cal._dt_raw is not None
+    assert cal._dt_line is not None
     assert cal.pit_loss is None
     assert abs(cal._pit_entry_pct - 0.30) < 1e-6
     assert abs(cal._pit_exit_pct - 0.45) < 1e-6
@@ -148,7 +148,49 @@ def test_service_sequential():
     print("test_service_sequential: ALLE ASSERTS OK")
 
 
+def test_pit_loss_profile():
+    """Pit-Durchfahrt über das Clean-Lap-Profil + erweitertes Fenster: erfasst
+    Abbremsen VOR und Beschleunigen NACH den OnPitRoad-Linien (was die
+    Linie-zu-Linie-Methode unterschätzt)."""
+    c = PitCalibrator()
+    c._save_partial = lambda k: None
+    c.start("K")
+    LAP = 100.0
+
+    def feed(t, on_pit, pct, speed=40.0):
+        c.feed(time=t, on_pit=on_pit, speed=speed, fuel=50.0, pct=pct,
+               ref_lap=LAP, pitstop_active=False, pit_sv_flags=0)
+
+    feed(0.0, False, 0.50)                       # scharf schalten
+    # 3 saubere Runden -> Profil (uniform: profile(p) = p*LAP)
+    for lap in range(3):
+        base = lap * LAP
+        for k in range(1, 50):
+            p = k / 50.0
+            feed(base + p * LAP, False, p)
+    assert c._clean_profile is not None, "kein Clean-Lap-Profil erfasst"
+
+    # Runde 4: Durchfahrt mit Decel vor + Accel nach der Box.
+    T = 300.0
+    feed(T + 0.0, False, 0.40)
+    feed(T + 5.0, False, 0.45)                   # t0 @ p0=0.45 (Anflug racing)
+    feed(T + 14.0, False, 0.50)                  # Decel 0.45->0.50 in 9s (statt 5)
+    feed(T + 14.5, True, 0.505, speed=20)        # Pit-Einfahrt
+    feed(T + 40.0, True, 0.595, speed=20)        # langsam durch (kein Halt)
+    feed(T + 40.5, False, 0.60)                  # Pit-Ausfahrt @ 0.60
+    feed(T + 44.0, False, 0.625)                 # Accel 0.60->0.65 in 8s (statt 5)
+    feed(T + 48.5, False, 0.65)                  # p1=0.65 -> Fenster schliesst
+    feed(T + 52.0, False, 0.70)
+
+    assert c._dt_window is not None, "Fenster-Methode nicht aktiv"
+    # actual(0.45->0.65) = t1(348.5) - t0(305) = 43.5 ; clean = 0.20*100 = 20
+    # -> loss ~ 23.5 (Linie-Fallback waere nur ~16 -> Fenster erfasst mehr)
+    assert 20.0 < c.pit_loss < 27.0, c.pit_loss
+    print("test_pit_loss_profile: loss=%.1fs (Fenster) OK" % c.pit_loss)
+
+
 if __name__ == "__main__":
     main()
     test_passive_marks()
     test_service_sequential()
+    test_pit_loss_profile()

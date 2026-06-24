@@ -24,6 +24,7 @@
 # (tire_change_sec = dauer × 4 / anzahl). Die Standzeit für n Reifen ergibt sich
 # später als tire_change_sec × n/4.
 
+import bisect
 import json
 import math
 import os
@@ -39,6 +40,14 @@ _MAX_TIRE_FLAT_L = 0.6   # L   — darunter gilt der Tankstand als "flach" (Fall
 # iRacing-Blackbox (PitSvFlags) — deterministisch, was beim Stopp gemacht wird.
 _PITSV_TIRE_MASK = 0x0F  # LF|RF|LR|RR — gesetzte Bits = Anzahl gewechselter Reifen
 _PITSV_FUEL      = 0x10   # FuelFill-Bit
+
+# Pit-Durchfahrt: das Mess-Fenster wird vor/nach den OnPitRoad-Linien um diese
+# Marge (Anteil einer Runde) erweitert, damit Abbremsen VOR der Einfahrt und
+# Beschleunigen NACH der Ausfahrt mitzählen. Übermaß hebt sich gegen das
+# Clean-Lap-Profil auf, daher darf die Marge großzügig sein.
+_PIT_WINDOW_MARGIN = 0.05
+_TRAJ_KEEP_SEC = 60.0    # so lange wird die (time, pct)-Trajektorie gepuffert
+                         # (muss > Anflug + Boxengassen-Transit sein)
 
 
 def _cache_path() -> str:
@@ -99,7 +108,23 @@ class PitCalibrator:
         self._best_clean_lap = None   # s — schnellste saubere Runde
         self._lap_had_pit = True      # hatte die laufende Runde Boxen-Kontakt?
         self._prev_ref_lap = None     # zur Flankenerkennung "Runde abgeschlossen"
-        self._dt_raw = None           # (transit, span) der gemessenen Durchfahrt
+
+        # Pit-Durchfahrt-Verlust:
+        #   _dt_line   = (transit, span)  -> Fallback (Linie-zu-Linie × ref_lap)
+        #   _dt_window = (p0, p1, actual) -> bevorzugt (erweitertes Fenster gegen
+        #                                    das Clean-Lap-Profil)
+        self._dt_line = None
+        self._dt_window = None
+        self._dt_pending = None       # (p0, p1, t0) wartet, bis pct p1 erreicht
+        self._dt_pp = None            # (prev_pct, prev_time) für das Pending-Fenster
+
+        # Trajektorie (time, pct) + Clean-Lap-Profil (Position->Zeit-seit-S/Z)
+        self._traj = []
+        self._clean_profile = None    # {"lap_time", "pcts", "times"}
+        self._pl_start = None         # Startzeit der laufenden Profil-Runde
+        self._pl_samples = []         # (pct, t_seit_rundenbeginn)
+        self._pl_had_pit = True
+        self._pl_prev_pct = None
 
         # Letzte Statusmeldung fürs Overlay
         self._last_event = ""
@@ -130,7 +155,7 @@ class PitCalibrator:
         self._best_clean_lap = None
         self._lap_had_pit = True
         self._prev_ref_lap = None
-        self._dt_raw = None
+        self._reset_dt_profile()
         self._prev_on_pit = False
         self._pit_entry_pct = None
         self._pit_exit_pct = None
@@ -152,10 +177,22 @@ class PitCalibrator:
         self._best_clean_lap = None
         self._lap_had_pit = True
         self._prev_ref_lap = None
-        self._dt_raw = None
+        self._reset_dt_profile()
         self._prev_on_pit = False
         self._reset_visit()
         self._last_event = "zurückgesetzt"
+
+    def _reset_dt_profile(self):
+        self._dt_line = None
+        self._dt_window = None
+        self._dt_pending = None
+        self._dt_pp = None
+        self._traj = []
+        self._clean_profile = None
+        self._pl_start = None
+        self._pl_samples = []
+        self._pl_had_pit = True
+        self._pl_prev_pct = None
 
     def _reset_visit(self):
         self._entry_time = None
@@ -220,6 +257,9 @@ class PitCalibrator:
                 self._last_event = "Bitte Box verlassen & Referenzrunde fahren"
             self._prev_on_pit = on_pit
             return
+
+        # --- Trajektorie + Clean-Lap-Profil + offenes Durchfahrt-Fenster ---
+        self._track_trajectory(time, pct, on_pit)
 
         # --- Runden-Erfassung für die Referenz (schnellste saubere Runde) ---
         # Flanke "neue offizielle Rundenzeit" => vorige Runde ist abgeschlossen.
@@ -297,21 +337,29 @@ class PitCalibrator:
 
         if not self._was_stationary:
             # --- Boxen-DURCHFAHRT (Auto stand NIE) -> Pit-Lane-Verlust ---
-            # Rohdaten (Transit + Streckenanteil) festhalten und gegen die
-            # schnellste SAUBERE Runde rechnen. Liegt noch keine saubere Runde
-            # vor, wird der Verlust später automatisch nachgerechnet (feed()).
             if self._entry_pct is not None:
+                # Fallback-Rohdaten (Linie-zu-Linie) sofort festhalten.
                 transit = exit_time - self._entry_time
                 span = ((exit_pct - self._entry_pct) % 1 + 1) % 1
                 if span > 0.0:
-                    self._dt_raw = (transit, span)
-                    self._recompute_pit_loss()
-                    if self.pit_loss is not None:
-                        self._last_event = f"Durchfahrt gemessen: Verlust {self.pit_loss:.1f}s"
-                    elif self._best_clean_lap is None:
-                        self._last_event = "Durchfahrt erfasst — fahre eine saubere Referenzrunde"
-                    else:
-                        self._last_event = "Durchfahrt unplausibel — bitte wiederholen"
+                    self._dt_line = (transit, span)
+                # Bevorzugt: erweitertes Fenster (vor Einfahrt bis nach Ausfahrt),
+                # damit Abbremsen/Beschleunigen mitzählen. t0 (Start vor der
+                # Einfahrt) aus dem Puffer; t1 folgt, sobald pct p1 erreicht.
+                m = _PIT_WINDOW_MARGIN
+                p0 = (self._entry_pct - m) % 1.0
+                p1 = (exit_pct + m) % 1.0
+                t0 = self._interp_time_at(p0)
+                if t0 is not None:
+                    self._dt_pending = (round(p0, 5), round(p1, 5), t0, exit_time)
+                    self._dt_pp = (exit_pct % 1.0, exit_time)
+                self._recompute_pit_loss()
+                if self.pit_loss is not None:
+                    self._last_event = f"Durchfahrt gemessen: Verlust {self.pit_loss:.1f}s"
+                elif self._best_clean_lap is None and self._clean_profile is None:
+                    self._last_event = "Durchfahrt erfasst — fahre eine saubere Referenzrunde"
+                else:
+                    self._last_event = "Durchfahrt erfasst — messe Aus-Fenster…"
         else:
             # --- STOPP (Auto stand): tanken oder Reifen? ---
             svc_dur = (self._svc_end - self._svc_start) \
@@ -365,16 +413,129 @@ class PitCalibrator:
 
         self._reset_visit()
 
+    # ------------------------------------------------------------------
+    # Pit-Durchfahrt: Trajektorie, Clean-Lap-Profil, erweitertes Fenster
+    # ------------------------------------------------------------------
+
+    def _track_trajectory(self, time, pct, on_pit):
+        """Puffert (time, pct), erfasst das Clean-Lap-Profil (Position->Zeit) und
+        schließt ein offenes Durchfahrt-Fenster, sobald pct das Endmargin p1
+        erreicht."""
+        # (1) Trajektorie puffern (für die tatsächliche Zeit über das Fenster)
+        self._traj.append((time, pct))
+        while self._traj and (time - self._traj[0][0]) > _TRAJ_KEEP_SEC:
+            self._traj.pop(0)
+
+        # (2) Clean-Lap-Profil: selbst getaktete Runde via pct-Wrap
+        if self._pl_prev_pct is not None and self._pl_prev_pct > 0.7 and pct < 0.3:
+            if (self._pl_start is not None and not self._pl_had_pit
+                    and len(self._pl_samples) >= 30):
+                lt = time - self._pl_start
+                if lt > 5.0 and (self._clean_profile is None
+                                 or lt < self._clean_profile["lap_time"]):
+                    self._clean_profile = {
+                        "lap_time": lt,
+                        "pcts": [s[0] for s in self._pl_samples],
+                        "times": [s[1] for s in self._pl_samples],
+                    }
+                    self._recompute_pit_loss()
+                    self._maybe_complete()
+            self._pl_start = time
+            self._pl_samples = []
+            self._pl_had_pit = False
+        if self._pl_start is None:
+            self._pl_start = time
+        self._pl_samples.append((pct, time - self._pl_start))
+        if on_pit:
+            self._pl_had_pit = True
+        self._pl_prev_pct = pct
+
+        # (3) Offenes Durchfahrt-Fenster schließen, sobald pct p1 erreicht
+        if self._dt_pending is not None and not on_pit:
+            p0, p1, t0, t_exit = self._dt_pending
+            pp, tp = self._dt_pp if self._dt_pp else (None, None)
+            if pp is not None and pp < p1 <= pct and (pct - pp) < 0.5:
+                f = (p1 - pp) / (pct - pp) if pct != pp else 0.0
+                t1 = tp + f * (time - tp)
+                self._dt_window = (p0, p1, t1 - t0)
+                self._dt_pending = None
+                self._dt_pp = None
+                self._recompute_pit_loss()
+                if self.pit_loss is not None:
+                    self._last_event = f"Durchfahrt gemessen: Verlust {self.pit_loss:.1f}s"
+            else:
+                self._dt_pp = (pct, time)
+                # Timeout ab der Ausfahrt (nur die kurze Beschleunigungsphase).
+                if (time - t_exit) > 20.0:
+                    self._dt_pending = None
+                    self._dt_pp = None
+        elif self._dt_pending is not None and on_pit:
+            self._dt_pending = None          # zurück in die Box -> abbrechen
+            self._dt_pp = None
+
+    def _interp_time_at(self, target):
+        """Zeit, zu der das Auto die Position `target` in der ANNÄHERUNG durchfuhr
+        — aus dem Puffer, lokal interpoliert (letzte steigende Querung, kein Wrap)."""
+        traj = self._traj
+        for i in range(len(traj) - 1, 0, -1):
+            t1, p1 = traj[i]
+            t0, p0 = traj[i - 1]
+            if p0 <= target <= p1 and (p1 - p0) < 0.5:
+                if p1 == p0:
+                    return t0
+                return t0 + (target - p0) / (p1 - p0) * (t1 - t0)
+        return None
+
+    def _profile_time_at(self, p):
+        prof = self._clean_profile
+        if not prof or not prof["pcts"]:
+            return None
+        pcts, tms = prof["pcts"], prof["times"]
+        if p <= pcts[0]:
+            return tms[0]
+        if p >= pcts[-1]:
+            return tms[-1]
+        i = bisect.bisect_left(pcts, p)
+        p0, p1 = pcts[i - 1], pcts[i]
+        t0, t1 = tms[i - 1], tms[i]
+        if p1 == p0:
+            return t0
+        return t0 + (p - p0) / (p1 - p0) * (t1 - t0)
+
+    def _clean_span_time(self, p0, p1):
+        """Saubere Renntempo-Zeit über das Streckenfenster [p0, p1] aus dem
+        Clean-Lap-Profil (mit S/Z-Überlauf-Behandlung)."""
+        prof = self._clean_profile
+        if not prof:
+            return None
+        a = self._profile_time_at(p0)
+        b = self._profile_time_at(p1)
+        if a is None or b is None:
+            return None
+        span = b - a
+        if span < 0:
+            span += prof["lap_time"]        # Fenster läuft über S/Z
+        return span if span > 0 else None
+
     def _recompute_pit_loss(self):
-        """Pit-Verlust = Pitlane-Transit − (Streckenanteil × schnellste saubere
-        Runde). Wird neu berechnet, wenn eine Durchfahrt gemessen wurde UND eine
-        (schnellere) saubere Referenzrunde vorliegt."""
-        if self._dt_raw is None or self._best_clean_lap is None:
-            return
-        transit, span = self._dt_raw
-        loss = transit - span * self._best_clean_lap
-        if 0.0 < loss < 120.0:
-            self.pit_loss = round(loss, 2)
+        """Pit-Verlust bevorzugt über das Clean-Lap-Profil (erweitertes Fenster,
+        erfasst Abbremsen/Beschleunigen), sonst Fallback Linie-zu-Linie gegen die
+        schnellste saubere Runde (gleichförmiges Tempo)."""
+        # Bevorzugt: erweitertes Fenster gegen das Profil
+        if self._dt_window is not None and self._clean_profile is not None:
+            p0, p1, actual = self._dt_window
+            clean = self._clean_span_time(p0, p1)
+            if clean is not None:
+                loss = actual - clean
+                if 0.0 < loss < 120.0:
+                    self.pit_loss = round(loss, 2)
+                    return
+        # Fallback: Linie-zu-Linie × schnellste saubere Runde
+        if self._dt_line is not None and self._best_clean_lap is not None:
+            transit, span = self._dt_line
+            loss = transit - span * self._best_clean_lap
+            if 0.0 < loss < 120.0:
+                self.pit_loss = round(loss, 2)
 
     def _detect_sequential(self, svc_dur, fuel_delta, rate, tire_count):
         """Erkennt aus einem KOMBINIERTEN Stopp (Sprit + Reifen), ob die Serie
