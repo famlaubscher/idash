@@ -105,10 +105,19 @@ Sprit-Delta zwischen 0,6 und 2,0 L → Stopp ist mehrdeutig und wird verworfen.
 das Auto auf der Strecke ist (Box mindestens einmal verlassen) UND eine gültige
 Referenzrunde (`LapLastLapTime`/`LapBestLapTime` > 0,5 s) vorliegt. Davor wird
 nichts gemessen — verhindert, dass ein beim Start bereits laufender Boxenbesuch
-(Auto steht schon in der Box) fälschlich als Reifen-/Tankstopp zählt. Die
-Durchfahrt-Messung braucht die Referenzrunde ohnehin (Pit-Verlust = Transit –
-Strecken-Soll). `status()` liefert `armed` und `ref_lap`; das Circle-Overlay
-zeigt die aktuelle Referenzrunde im Kalibrier-Panel an.
+(Auto steht schon in der Box) fälschlich als Reifen-/Tankstopp zählt.
+
+**Referenzrunde für den Pit-Verlust:** Pit-Verlust = Transit −
+(Streckenanteil × Referenzrunde). Als Referenz dient die **schnellste SAUBERE
+(grüne) Runde** des Kalibrierlaufs — der Kalibrator sammelt die offiziellen
+Rundenzeiten (`LapLastLapTime`) und markiert jede Runde mit Boxen-Kontakt
+(In-/Out-/Durchfahrtsrunde, `_lap_had_pit`) als unsauber. Liegt beim Messen der
+Durchfahrt noch keine saubere Runde vor, werden die Rohdaten (`_dt_raw` =
+Transit + Streckenanteil) gespeichert und der Verlust **automatisch
+nachgerechnet** (`_recompute_pit_loss`), sobald eine — oder eine schnellere —
+saubere Runde abgeschlossen wird. `status()` liefert `armed` und `ref_lap` (=
+schnellste saubere Runde, stabil); das Circle-Overlay zeigt sie im
+Kalibrier-Panel als „Referenz (schnellste saubere Runde)" an.
 
 Relevante Dateien: `app/pit_calibrator.py` (Messung/Persistenz),
 `app/telemetry_server.py` (`_handle_calibration`, Kommando-Polling),

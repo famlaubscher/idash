@@ -59,7 +59,18 @@ class PitCalibrator:
         # Arming-Gate: erst scharf, wenn das Auto die Box einmal verlassen hat
         # UND eine Referenzrunde vorliegt (siehe feed()).
         self._armed = False
-        self._ref_lap = None     # s — zuletzt gesehene gültige Referenzrunde
+        self._ref_lap = None     # s — zuletzt gesehene Rundenzeit (nur fürs Gate)
+
+        # Referenz-Runden-Erfassung: wir sammeln abgeschlossene Runden und
+        # markieren jede Runde mit Boxen-Kontakt (In-/Out-/Durchfahrtsrunde) als
+        # "unsauber". Als Tempomaß für den Pit-Verlust dient die SCHNELLSTE
+        # SAUBERE (grüne) Runde. Der Pit-Verlust wird nachgerechnet, sobald (oder
+        # eine schnellere) saubere Runde vorliegt — auch wenn die Durchfahrt
+        # bereits davor gefahren wurde.
+        self._best_clean_lap = None   # s — schnellste saubere Runde
+        self._lap_had_pit = True      # hatte die laufende Runde Boxen-Kontakt?
+        self._prev_ref_lap = None     # zur Flankenerkennung "Runde abgeschlossen"
+        self._dt_raw = None           # (transit, span) der gemessenen Durchfahrt
 
         # Letzte Statusmeldung fürs Overlay
         self._last_event = ""
@@ -81,6 +92,10 @@ class PitCalibrator:
         self.tire_time = None
         self._armed = False
         self._ref_lap = None
+        self._best_clean_lap = None
+        self._lap_had_pit = True
+        self._prev_ref_lap = None
+        self._dt_raw = None
         self._prev_on_pit = False
         self._reset_visit()
         self._last_event = "Kalibrierung gestartet — Box verlassen & Referenzrunde fahren"
@@ -95,6 +110,10 @@ class PitCalibrator:
     def reset(self):
         self.pit_loss = self.fuel_rate = self.tire_time = None
         self._armed = False
+        self._best_clean_lap = None
+        self._lap_had_pit = True
+        self._prev_ref_lap = None
+        self._dt_raw = None
         self._prev_on_pit = False
         self._reset_visit()
         self._last_event = "zurückgesetzt"
@@ -141,6 +160,10 @@ class PitCalibrator:
                 self._reset_visit()
                 self._prev_on_pit = on_pit          # = False (auf Strecke)
                 self._last_ontrack_pct = pct
+                # Runden-Erfassung scharf stellen: die gerade laufende Runde ist
+                # die Out-Lap (Box verlassen) -> als unsauber markieren.
+                self._prev_ref_lap = self._ref_lap
+                self._lap_had_pit = True
                 self._last_event = "Bereit — Kalibrierung scharf"
                 return
             if not on_pit:
@@ -150,6 +173,21 @@ class PitCalibrator:
                 self._last_event = "Bitte Box verlassen & Referenzrunde fahren"
             self._prev_on_pit = on_pit
             return
+
+        # --- Runden-Erfassung für die Referenz (schnellste saubere Runde) ---
+        # Flanke "neue offizielle Rundenzeit" => vorige Runde ist abgeschlossen.
+        if ref_lap is not None and ref_lap > 0.5 and ref_lap != self._prev_ref_lap:
+            if self._prev_ref_lap is not None:      # erste Flanke nach Arming überspringen
+                if not self._lap_had_pit:           # nur grüne Runden zählen
+                    if self._best_clean_lap is None or ref_lap < self._best_clean_lap:
+                        self._best_clean_lap = round(float(ref_lap), 3)
+                        self._recompute_pit_loss()
+                        self._maybe_complete()
+            self._prev_ref_lap = ref_lap
+            self._lap_had_pit = False               # neue Runde startet sauber
+        # Boxen-Kontakt der LAUFENDEN Runde merken (In-/Out-/Durchfahrtsrunde)
+        if on_pit:
+            self._lap_had_pit = True
 
         # Boxeneinfahrt (Flanke on-track -> pit)
         if on_pit and not self._prev_on_pit:
@@ -173,7 +211,7 @@ class PitCalibrator:
 
         # Boxenausfahrt (Flanke pit -> on-track): Besuch auswerten
         if (not on_pit) and self._prev_on_pit:
-            self._finalize_visit(exit_time=time, exit_pct=pct, ref_lap=ref_lap)
+            self._finalize_visit(exit_time=time, exit_pct=pct)
 
         # On-track-Position für die nächste Einfahrt merken
         if not on_pit:
@@ -181,21 +219,27 @@ class PitCalibrator:
 
         self._prev_on_pit = on_pit
 
-    def _finalize_visit(self, *, exit_time, exit_pct, ref_lap):
+    def _finalize_visit(self, *, exit_time, exit_pct):
         if self._entry_time is None:
             return
 
         if not self._saw_stationary:
             # --- Boxen-DURCHFAHRT -> Pit-Lane-Verlust ---
-            if ref_lap and ref_lap > 0.5 and self._entry_pct is not None:
+            # Rohdaten (Transit + Streckenanteil) festhalten und gegen die
+            # schnellste SAUBERE Runde rechnen. Liegt noch keine saubere Runde
+            # vor, wird der Verlust später automatisch nachgerechnet (feed()).
+            if self._entry_pct is not None:
                 transit = exit_time - self._entry_time
                 span = ((exit_pct - self._entry_pct) % 1 + 1) % 1
-                loss = transit - span * ref_lap
-                if 0.0 < loss < 120.0:
-                    self.pit_loss = round(loss, 2)
-                    self._last_event = f"Durchfahrt gemessen: Verlust {self.pit_loss:.1f}s"
-                else:
-                    self._last_event = "Durchfahrt unplausibel — bitte wiederholen"
+                if span > 0.0:
+                    self._dt_raw = (transit, span)
+                    self._recompute_pit_loss()
+                    if self.pit_loss is not None:
+                        self._last_event = f"Durchfahrt gemessen: Verlust {self.pit_loss:.1f}s"
+                    elif self._best_clean_lap is None:
+                        self._last_event = "Durchfahrt erfasst — fahre eine saubere Referenzrunde"
+                    else:
+                        self._last_event = "Durchfahrt unplausibel — bitte wiederholen"
         else:
             # --- STOPP: tanken oder Reifen-only? ---
             fuels = [f for _, f in self._fuel_samples if f is not None]
@@ -220,11 +264,25 @@ class PitCalibrator:
                 self._last_event = "Stopp mehrdeutig (etwas getankt) — Schritt wiederholen"
 
         # Bei Komplettierung automatisch speichern
+        self._maybe_complete()
+
+        self._reset_visit()
+
+    def _recompute_pit_loss(self):
+        """Pit-Verlust = Pitlane-Transit − (Streckenanteil × schnellste saubere
+        Runde). Wird neu berechnet, wenn eine Durchfahrt gemessen wurde UND eine
+        (schnellere) saubere Referenzrunde vorliegt."""
+        if self._dt_raw is None or self._best_clean_lap is None:
+            return
+        transit, span = self._dt_raw
+        loss = transit - span * self._best_clean_lap
+        if 0.0 < loss < 120.0:
+            self.pit_loss = round(loss, 2)
+
+    def _maybe_complete(self):
         if self.active and self._key and self.is_complete():
             self._save_partial(self._key)
             self._last_event = "Kalibrierung komplett & gespeichert ✓"
-
-        self._reset_visit()
 
     def _fuel_rate_from_samples(self):
         """Robuste Steigung L/s aus den (time, fuel)-Proben während des Tankens.
@@ -257,7 +315,9 @@ class PitCalibrator:
         return {
             "active":   self.active,
             "armed":    self._armed,
-            "ref_lap":  self._ref_lap,
+            # Angezeigte Referenz = schnellste SAUBERE Runde (stabil, das Maß für
+            # den Pit-Verlust). None, solange noch keine grüne Runde vorliegt.
+            "ref_lap":  self._best_clean_lap,
             "pit_loss": self.pit_loss,
             "fuel_rate": self.fuel_rate,
             "tire_time": self.tire_time,
