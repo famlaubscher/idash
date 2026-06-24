@@ -183,6 +183,13 @@
       margin-top: 2px;
     }
     .center-wait { font-size: 11px; color: #475569; }
+    /* Dauer-Übersicht (Zeitverlust) dauerhaft im Zentrum */
+    .center-losses {
+      font-size: 10px; color: #93c5fd; margin-top: 6px; line-height: 1.4;
+      font-variant-numeric: tabular-nums;
+    }
+    .center-losses .cl-val { color: #f1f5f9; font-weight: 800; }
+    .center-losses .cl-lbl { color: #64748b; }
 
     /* Pit-Phasen-Label in der Kreismitte */
     .center-pit {
@@ -277,6 +284,7 @@
         <div id="center-pit" class="center-pit" style="display:none"></div>
         <div id="center-track" class="center-track"></div>
         <div id="center-sub" class="center-sub"></div>
+        <div id="center-losses" class="center-losses" style="display:none"></div>
       </div>
 
       <!-- Kalibrier-Panel (nur im Kalibrier-Modus sichtbar) -->
@@ -321,6 +329,8 @@
       manualRefuelL:   null,   // feste Tankmenge in L (überschreibt IMMER, auch live)
       refuelFallbackL: null,   // Tankmenge, wenn keine Fuel-Telemetrie da ist (z.B. Replay)
       refLapFallbackSec: 100.0, // Ersatz-Rundenzeit, solange keine echte vorliegt
+      tiresSelected:   null,   // live aus Blackbox (0–4); null = unbekannt -> changeTires
+      fuelSelected:    null,   // live aus Blackbox: wird getankt?
     };
     // Bekannte Keys, die aus overlay_config.json["pit"] übernommen werden dürfen.
     const PIT_CONFIG_KEYS = Object.keys(PIT_CONFIG);
@@ -343,6 +353,30 @@
     const centerTrk = document.getElementById("center-track");
     const centerSub = document.getElementById("center-sub");
     const centerPit = document.getElementById("center-pit");
+    const centerLosses = document.getElementById("center-losses");
+
+    // Dauerhafte Dauer-Übersicht: Zeitverlust Durchfahrt + Volltank-Stopp.
+    function updateCenterLosses(strategy) {
+      const loss = PIT_CONFIG.pitLaneLossSec;
+      const rate = PIT_CONFIG.fuelRateLps;
+      const tire4 = PIT_CONFIG.tireChangeSec;       // alle 4 Reifen
+      if (!Number.isFinite(loss) || loss <= 0) { centerLosses.style.display = "none"; return; }
+
+      // Tankvolumen: echte Telemetrie -> Refuel-Fallback
+      let tank = (strategy && Number.isFinite(strategy.fuel_tank_capacity))
+        ? strategy.fuel_tank_capacity : null;
+      if (tank == null && Number.isFinite(PIT_CONFIG.refuelFallbackL)) tank = PIT_CONFIG.refuelFallbackL;
+
+      const fmt = s => (s >= 100 ? s.toFixed(0) : s.toFixed(1)) + "s";
+      let html = `<span class="cl-lbl">Drive-Thru</span> <span class="cl-val">${fmt(loss)}</span>`;
+      if (Number.isFinite(tank) && tank > 0 && rate > 0) {
+        const refuelFull = tank / rate;
+        const standing   = Math.max(refuelFull, Number.isFinite(tire4) ? tire4 : 0);
+        html += `<br><span class="cl-lbl">Stop voll</span> <span class="cl-val">${fmt(loss + standing)}</span>`;
+      }
+      centerLosses.innerHTML = html;
+      centerLosses.style.display = "";
+    }
     const calPanel  = document.getElementById("cal-panel");
     const calEvent  = document.getElementById("cal-event");
     const calRef    = document.getElementById("cal-ref");
@@ -552,7 +586,12 @@
       if (!Number.isFinite(liters) || liters < 0) liters = 0;
 
       const refuelSec = PIT_CONFIG.fuelRateLps > 0 ? liters / PIT_CONFIG.fuelRateLps : 0;
-      const tireSec   = PIT_CONFIG.changeTires ? PIT_CONFIG.tireChangeSec : 0;
+      // Reifen-Standzeit nach Anzahl gewählter Reifen (Blackbox). tireChangeSec
+      // gilt für alle 4 -> linear skalieren. Ohne Live-Info: changeTires (4/0).
+      const tireCount = Number.isFinite(PIT_CONFIG.tiresSelected)
+        ? PIT_CONFIG.tiresSelected
+        : (PIT_CONFIG.changeTires ? 4 : 0);
+      const tireSec   = PIT_CONFIG.tireChangeSec * tireCount / 4;
       const standing  = Math.max(refuelSec, tireSec);        // Standzeit (Tanken ∥ Reifen)
       const tPit      = PIT_CONFIG.pitLaneLossSec + standing;
       if (!(tPit > 0)) return null;
@@ -738,6 +777,7 @@
       const track = circle.track_name || "";
       centerTrk.textContent = track;
       centerSub.textContent = cars.length ? (cars.length + " Cars") : "warte auf iRacing";
+      updateCenterLosses(strategy);
 
       // Nicht mehr vorhandene Autos entfernen
       const present = new Set(cars.map(c => c.car_idx));

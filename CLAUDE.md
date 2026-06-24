@@ -79,10 +79,12 @@ Builder-Tests reicht das praktisch immer; echte Session-Wechsel
 
 `app/pit_calibrator.py` ist eine State-Machine, die pro Slow-Tick mit dem
 Spieler-Kontext (`SessionTime`, `OnPitRoad`, `Speed`, `FuelLevel`,
-`LapDistPct`, Referenzrunde) gefüttert wird (`telemetry_server._handle_calibration`).
-Sie MISST drei Pit-Parameter aus der Telemetrie (statt sie anzunehmen) und
-speichert sie pro **Auto|Strecke|Layout|Serie** in `app/pit_cache.json`. Die
-gelernten Werte überschreiben die Defaults für den „Circle of Doom".
+`LapDistPct`, Referenzrunde sowie den **deterministischen** Pit-Service-Signalen
+`PitstopActive` und `PitSvFlags`) gefüttert wird
+(`telemetry_server._handle_calibration`). Sie MISST die Pit-Parameter aus der
+Telemetrie (statt sie anzunehmen) und speichert sie pro
+**Auto|Strecke|Layout|Serie** in `app/pit_cache.json`. Die gelernten Werte
+überschreiben die Defaults für den „Circle of Doom".
 
 Bedienung: Im Overlay-Manager **„Pit-Kalibrierung starten"** → sendet ein
 Kommando (`pit_cal_cmd` in `overlay_layout.json`, per Nonce entprellt) und
@@ -93,13 +95,34 @@ blendet das Circle-Overlay mit dem Kalibrier-Panel ein. Läuft nur **live**
 (Einfahrt→Ausfahrt) füllt höchstens einen Slot. Sind alle drei gemessen, wird
 automatisch gespeichert (`is_complete()`).
 
-| Schritt | Erkennung | Slot |
+| Schritt | Erkennung (deterministisch) | Slot |
 |---|---|---|
-| Boxen-Durchfahrt (ohne Halt) | kein Stillstand ≥ `_MIN_STATIONARY` (1,2 s) | `pit_lane_loss_sec` |
-| Tankstopp | Stillstand **und** Nachtanken ≥ `_MIN_REFUEL_L` (2,0 L) | `fuel_rate_lps` |
-| Reifen-only | Stillstand **und** Sprit-Delta ≤ `_MAX_TIRE_FLAT_L` (0,6 L) | `tire_change_sec` |
+| Boxen-Durchfahrt (ohne Halt) | kein Service (`PitstopActive` nie true) | `pit_lane_loss_sec` (+ Pit-Marken) |
+| Tankstopp | Service **und** FuelFill-Bit (`PitSvFlags & 0x10`) | `fuel_rate_lps` |
+| Reifen-Stopp (kein Tanken) | Service **und** Reifen-Bits, kein Sprit | `tire_change_sec` |
 
-Sprit-Delta zwischen 0,6 und 2,0 L → Stopp ist mehrdeutig und wird verworfen.
+**Deterministisch statt heuristisch:** Das Service-Fenster kommt aus
+`PitstopActive`, „was gemacht wurde" aus `PitSvFlags` (Reifen-Bits `0x0F`,
+FuelFill `0x10`). Die alte Speed-Stillstands- und Sprit-Schwellen-Heuristik
+(`_STOP_SPEED`, `_MIN_REFUEL_L`, `_MAX_TIRE_FLAT_L`) ist nur noch **Fallback**,
+wenn diese Felder fehlen (z.B. alte Aufnahmen).
+
+**Reifen 0–4 / Hochrechnung:** Beim Reifen-Stopp wird die Service-Dauer über die
+Reifenanzahl (`PitSvFlags`) auf alle 4 normiert:
+`tire_change_sec = dauer × 4 / anzahl`. Im Pit-Zeitmodell ergibt sich die
+Standzeit für n Reifen als `tire_change_sec × n/4` (live skaliert über die
+Blackbox-Auswahl `tiresSelected`/`fuelSelected`, die der Server in `pit_config`
+legt).
+
+**Pit-Marken deterministisch:** Bei jedem Besuch werden die exakten
+Boxen-Ein-/Ausfahrt-Positionen (`pit_entry_pct`/`pit_exit_pct`, LapDistPct)
+festgehalten, in `pit_cache.json` gespeichert und vom Server in den
+Circle-Payload geschrieben — sie ersetzen die All-Cars-Heuristik
+(`circle_builder._learn_pit_marks`), die nur noch als Fallback dient.
+
+**Dauer-Übersicht im Circle-Zentrum:** `circle.html` zeigt dauerhaft den
+Zeitverlust „Drive-Thru" (= `pitLaneLossSec`) und „Stop voll" (=
+`pitLaneLossSec + max(Tankvolumen/Rate, tire_change_sec)`).
 
 **Gate (Arming):** Die Kalibrierung wird erst „scharf" (`_armed=True`), wenn
 das Auto auf der Strecke ist (Box mindestens einmal verlassen) UND eine gültige
