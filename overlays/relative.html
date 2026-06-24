@@ -46,7 +46,7 @@
   }
 
   .relative-root {
-    width: 540px;
+    width: fit-content;
     display: flex;
     flex-direction: column;
     gap: 6px;
@@ -81,7 +81,7 @@
     width: 100%;
     border-collapse: collapse;
     font-size: 14px;
-    table-layout: fixed;
+    table-layout: auto;
   }
 
   thead tr {
@@ -105,7 +105,7 @@
 
   th.pos        { width: 38px;  text-align: right; }
   th.car        { width: 42px;  text-align: right; }
-  th.name       { min-width: 80px; }
+  th.name       { width: 120px; }
   th.tyre       { width: 40px;  text-align: center; }
   th.cls        { width: 110px; text-align: right; }
   th.gap        { width: 60px;  text-align: right; }
@@ -677,6 +677,7 @@
       }).join("");
 
       tbody.innerHTML = rowsHtml;
+      if (_colOrder.length) window.setColumnOrder(_colOrder);
       autoFitScale();
     }
 
@@ -968,6 +969,24 @@
         if (!visible) css += `[data-col="${key}"] { display: none !important; }\n`;
       }
       _colStyle.textContent = css;
+    };
+
+    let _colOrder = [];
+    window.setColumnOrder = function(order) {
+      _colOrder = order;
+      const thead = document.querySelector("thead tr");
+      if (thead) {
+        order.forEach(key => {
+          const th = thead.querySelector(`[data-col="${key}"]`);
+          if (th) thead.appendChild(th);
+        });
+      }
+      document.querySelectorAll("tbody tr").forEach(tr => {
+        order.forEach(key => {
+          const td = tr.querySelector(`[data-col="${key}"]`);
+          if (td) tr.appendChild(td);
+        });
+      });
     };
 
     function connect() {
