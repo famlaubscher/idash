@@ -57,6 +57,7 @@ _PIT_DEFAULTS = {
     "fuelRateLps":      2.84,   # Betankung: Liter pro Sekunde (108 L in 38 s)
     "tireChangeSec":    18.0,   # Dauer kompletter Reifenwechsel (alle 4)
     "changeTires":      True,   # Reifen wechseln?
+    "serviceSequential": False, # Tanken+Reifen nacheinander (sum) statt parallel (max)
     "pitLaneLossSec":   20.0,   # Zeitverlust Boxengasse ggü. Strecke (Durchfahrt)
     "manualRefuelL":    None,   # feste Tankmenge (überschreibt IMMER, auch live)
     "refuelFallbackL":  None,   # Tankmenge, wenn keine Fuel-Telemetrie da ist (z.B. Replay)
@@ -69,6 +70,7 @@ _PIT_FIELDS = {
     "fuel_rate_lps":        ("fuelRateLps",      float),
     "tire_change_sec":      ("tireChangeSec",    float),
     "change_tires":         ("changeTires",      bool),
+    "service_sequential":   ("serviceSequential", bool),
     "pit_lane_loss_sec":    ("pitLaneLossSec",   float),
     "manual_refuel_l":      ("manualRefuelL",    float),
     "refuel_fallback_l":    ("refuelFallbackL",  float),
@@ -624,6 +626,16 @@ class TelemetryServer:
                          pit_sv_flags=int(pit_sv_flags) if pit_sv_flags is not None else None)
             except Exception:
                 logger.exception("Fehler in PitCalibrator.feed")
+
+            # Passives Marken-Lernen: ausserhalb einer aktiven Kalibrierung die
+            # Pit-Ein-/Ausfahrt bei echten Boxenstopps selbst korrigieren.
+            if not cal.active:
+                try:
+                    cal.observe_marks(key=PitCalibrator.make_key(self.ir),
+                                      on_pit=on_pit,
+                                      pct=float(pct) if pct is not None else None)
+                except Exception:
+                    logger.exception("Fehler in PitCalibrator.observe_marks")
 
             # Live-Reifenauswahl aus der Blackbox merken (nach pit_config-Bau setzen)
             if pit_sv_flags is not None:

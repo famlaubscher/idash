@@ -132,6 +132,16 @@ Im Pit-Zeitmodell ergibt sich die Standzeit für n Reifen als
 `circle.html` zeigt sie als „Gewählt: n Reifen · X L → Stoppzeit" (bzw.
 „Blackbox n/a", wenn die Felder nicht lesbar sind — dient als Diagnose).
 
+**Service-Modus (sequenziell vs parallel):** Manche Serien wickeln Tanken und
+Reifen NACHEINANDER ab (Standzeit = `refuel + tire`) statt gleichzeitig
+(`max(refuel, tire)`). Das Flag `service_sequential` steuert das Modell; es wird
+beim ersten KOMBINIERTEN Stopp (Sprit + Reifen) automatisch erkannt
+(`_detect_sequential`: echtes `PitstopActive`-Fenster ≈ sum → sequenziell, ≈ max
+→ parallel; setzt vorher gemessene `fuel_rate` + `tire_change_sec` voraus) und in
+`pit_cache.json` persistiert. Hinweis: `tire_change_sec`/`fuel_rate` sind pro
+Fahrzeug, `service_sequential` pro Serie, die Strecken-Werte (`pit_lane_loss_sec`,
+Pit-Marken) pro Strecke stabil.
+
 **Pit-Marken deterministisch:** Bei jedem Besuch werden die exakten
 Boxen-Ein-/Ausfahrt-Positionen (`pit_entry_pct`/`pit_exit_pct`, LapDistPct)
 festgehalten, in `pit_cache.json` gespeichert und vom Server in den
@@ -148,17 +158,23 @@ Referenzrunde (`LapLastLapTime`/`LapBestLapTime` > 0,5 s) vorliegt. Davor wird
 nichts gemessen — verhindert, dass ein beim Start bereits laufender Boxenbesuch
 (Auto steht schon in der Box) fälschlich als Reifen-/Tankstopp zählt.
 
-**Referenzrunde für den Pit-Verlust:** Pit-Verlust = Transit −
-(Streckenanteil × Referenzrunde). Als Referenz dient die **schnellste SAUBERE
-(grüne) Runde** des Kalibrierlaufs — der Kalibrator sammelt die offiziellen
-Rundenzeiten (`LapLastLapTime`) und markiert jede Runde mit Boxen-Kontakt
-(In-/Out-/Durchfahrtsrunde, `_lap_had_pit`) als unsauber. Liegt beim Messen der
-Durchfahrt noch keine saubere Runde vor, werden die Rohdaten (`_dt_raw` =
-Transit + Streckenanteil) gespeichert und der Verlust **automatisch
-nachgerechnet** (`_recompute_pit_loss`), sobald eine — oder eine schnellere —
-saubere Runde abgeschlossen wird. `status()` liefert `armed` und `ref_lap` (=
-schnellste saubere Runde, stabil); das Circle-Overlay zeigt sie im
-Kalibrier-Panel als „Referenz (schnellste saubere Runde)" an.
+**Pit-Verlust — erweitertes Fenster gegen Clean-Lap-Profil (bevorzugt):** Das
+reine Linie-zu-Linie-Delta (von der `OnPitRoad`-Einfahrt bis zur Ausfahrt)
+unterschätzt den Verlust, weil **Abbremsen VOR** der Einfahrtslinie und
+**Beschleunigen NACH** der Ausfahrtslinie fehlen (in Motegi viel, in Watkins
+wenig). Deshalb misst der Kalibrator den Verlust über ein **erweitertes Fenster**
+`[Einfahrt − Marge, Ausfahrt + Marge]` (`_PIT_WINDOW_MARGIN`) gegen ein
+**Position→Zeit-Profil der schnellsten sauberen Runde** (`_clean_profile`):
+`Verlust = tatsächliche Zeit über das Fenster − Profil-Zeit über denselben
+Streckenabschnitt`. Das erfasst Decel/Accel UND ungleichmäßiges Tempo und
+funktioniert über S/Z hinweg (Watkins). Umsetzung: Trajektorie `(time, pct)`
+gepuffert (`_traj`, `_TRAJ_KEEP_SEC`), `t0` aus dem Puffer vor der Einfahrt, `t1`
+sobald `pct` das End-Margin erreicht (`_dt_window`). **Fallback** (wenn Puffer/
+Profil fehlen): Linie-zu-Linie × schnellste saubere Runde (`_dt_line`,
+`_best_clean_lap`). Saubere Runden werden über `_lap_had_pit` erkannt; der
+Verlust wird **automatisch nachgerechnet** (`_recompute_pit_loss`), sobald eine —
+oder eine schnellere — saubere Runde/Profil vorliegt. `status().ref_lap` =
+schnellste saubere Runde (Anzeige im Kalibrier-Panel).
 
 Relevante Dateien: `app/pit_calibrator.py` (Messung/Persistenz),
 `app/telemetry_server.py` (`_handle_calibration`, Kommando-Polling),
