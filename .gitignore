@@ -12,6 +12,9 @@ build/
 dist/
 *.spec
 
+# Velopack output
+releases/
+
 # IDE
 .vscode/
 .idea/

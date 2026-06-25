@@ -1,0 +1,8 @@
+# iDash — Laufzeit-Abhängigkeiten
+# (Build-Tools siehe requirements-build.txt)
+PyQt5==5.15.11
+PyQtWebEngine==5.15.7
+pyirsdk==1.3.6
+PyYAML==6.0.3
+websockets==16.0
+velopack==1.2.0

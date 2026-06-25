@@ -1,0 +1,4 @@
+# iDash — Build-Abhängigkeiten (zusätzlich zu requirements.txt)
+# Verwendung:  pip install -r requirements-build.txt
+-r requirements.txt
+pyinstaller==6.11.1

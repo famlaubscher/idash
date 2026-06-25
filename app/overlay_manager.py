@@ -22,6 +22,8 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 
+import updater
+
 # -------------------------------------------------------------
 # Pfad-Handling (Dev + PyInstaller)
 # -------------------------------------------------------------
@@ -1104,8 +1106,20 @@ class OverlayManager(QWidget):
         self.btn_pit_cal.setCheckable(True)
         self.btn_pit_cal.clicked.connect(self.toggle_pit_calibration)
         main_layout.addWidget(self.btn_pit_cal)
+        main_layout.addSpacing(6)
+
+        btn_update = QPushButton("⭯  Auf Updates prüfen")
+        btn_update.setObjectName("ComparerBtn")
+        btn_update.clicked.connect(lambda: updater.check_and_apply(self))
+        main_layout.addWidget(btn_update)
 
         main_layout.addStretch()
+
+        # ── Footer: Versionsanzeige ──────────────────────────
+        version_label = QLabel(f"iDash v{updater.__version__}")
+        version_label.setObjectName("HeaderSubtitleLabel")
+        version_label.setAlignment(Qt.AlignHCenter)
+        main_layout.addWidget(version_label)
 
     # ------------------------------------------------------------------
     # Window Dragging
@@ -1392,6 +1406,10 @@ class OverlayManager(QWidget):
 
 
 def main():
+    # Velopack-Bootstrap: MUSS vor allem anderen laufen (Install/Update/Restart-
+    # Hooks). Im Dev-Betrieb ein No-op.
+    updater.run_startup_hooks()
+
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(2)
     except Exception:

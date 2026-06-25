@@ -1,0 +1,71 @@
+# iDash CI — Build + Velopack-Release auf gitlab.com
+#
+# Läuft auf dem self-hosted Windows-Runner (Shell/PowerShell-Executor).
+# Den iDash-Runner beim Registrieren mit dem Tag `win-idash` versehen, dann
+# greift `tags:` unten. Voraussetzungen auf dem Runner-Host:
+#   - Python 3.12 (Launcher `py -3.12`)
+#   - .NET SDK + Velopack-CLI:  dotnet tool install -g vpk
+#
+# Release-Trigger: Tag `vX.Y.Z` pushen (Version muss zu app/_version.py passen).
+
+stages:
+  - build
+
+variables:
+  PACK_ID: "ApexOverlay.iDash"
+
+build_and_release:
+  stage: build
+  tags:
+    - win-idash
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+  script:
+    # --- Version aus dem Tag ableiten (vX.Y.Z -> X.Y.Z) ---
+    - '$ver = $env:CI_COMMIT_TAG.TrimStart("v")'
+    - 'Write-Host "Building iDash $ver"'
+
+    # --- Python-Umgebung ---
+    - 'py -3.12 -m venv .venv'
+    - '.\.venv\Scripts\Activate.ps1'
+    - 'pip install -r requirements-build.txt'
+
+    # --- PyInstaller (--onedir, Velopack-kompatibel) ---
+    - >
+      pyinstaller --noconfirm --clean --windowed --name iDash --distpath dist
+      --icon "app\idash_logo.ico"
+      --hidden-import PyQt5.QtWebEngineWidgets --hidden-import PyQt5.QtWebEngineCore
+      --hidden-import PyQt5.QtWebChannel --hidden-import PyQt5.QtNetwork
+      --hidden-import irsdk --hidden-import websockets --hidden-import asyncio
+      --add-data "overlays;overlays"
+      --add-data "app\idash_logo.png;app" --add-data "app\idash_logo.ico;app"
+      app\overlay_manager.py
+
+    # --- Vorherige Releases ziehen (ermöglicht Delta-Updates) ---
+    # TODO (Teil F): sobald Feed steht, hier `vpk download ...` ergänzen,
+    #   damit Delta-Pakete gegen das letzte Release gebaut werden.
+
+    # --- Velopack-Paket bauen ---
+    - >
+      vpk pack --packId $env:PACK_ID --packTitle iDash --packVersion $ver
+      --packDir dist\iDash --mainExe iDash.exe --icon "app\idash_logo.ico"
+      --outputDir releases
+
+    # --- Velopack-Assets in die Generic Package Registry laden ---
+    # Stabile, von Velopack lesbare URLs unter
+    #   $CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/idash/<ver>/<file>
+    - >
+      Get-ChildItem releases -File | ForEach-Object {
+        $url = "$env:CI_API_V4_URL/projects/$env:CI_PROJECT_ID/packages/generic/idash/$ver/$($_.Name)";
+        Write-Host "Upload $($_.Name)";
+        curl.exe --fail --silent --show-error --header "JOB-TOKEN: $env:CI_JOB_TOKEN" --upload-file $_.FullName $url
+      }
+  # GitLab-Release mit verlinkten Assets (release-cli muss auf dem Runner sein).
+  # Alternativ stattdessen `glab release create` im script-Block nutzen.
+  release:
+    tag_name: $CI_COMMIT_TAG
+    description: "iDash $CI_COMMIT_TAG"
+  artifacts:
+    paths:
+      - releases/
+    expire_in: 30 days
